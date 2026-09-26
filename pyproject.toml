@@ -1,0 +1,17 @@
+# only for running tests: uv run pytest
+# (cnpg-users.py itself runs from its inline script metadata)
+[project]
+name = "cnpg-users"
+version = "0"
+requires-python = ">=3.11"
+dependencies = ["ruamel.yaml", "pygments", "kubernetes", "boto3"]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
