@@ -10,36 +10,54 @@ Nothing changes a database or repo unless you pass `--apply`.
 ## Workflow
 
 ```mermaid
-flowchart TD
-  subgraph once["1 · once"]
-    import["<b>import --write</b><br/>live clusters → dbs/*.yaml"]
+flowchart TB
+  classDef person fill:#fff3bf,stroke:#b08900,color:#000
+  classDef tool fill:#e7f0ff,stroke:#2f5fb3,color:#000
+  classDef ext fill:#e6f5e6,stroke:#2e7d32,color:#000
+  classDef stage fill:#fafafa,stroke:#999,color:#333
+
+  subgraph legend["who"]
+    direction LR
+    l1["you"]:::person ~~~ l2["cnpg-users"]:::tool ~~~ l3["GitOps / CNPG"]:::ext
   end
-  subgraph change["2 · change (you)"]
+
+  subgraph s1["1 · once · from live clusters"]
+    direction LR
+    import["<b>import --write</b><br/>→ dbs/*.yaml"]:::tool
+  end
+
+  subgraph s2["2 · change · you (grants also by hand)"]
+    direction LR
+    edit["<b>user grant</b><br/><b>user revoke</b><br/><b>user offboard</b>"]:::person --> commit["review + commit<br/>dbs/*.yaml"]:::person
+  end
+
+  subgraph s3["3 · check · you or CI"]
+    direction LR
+    sync["<b>sync</b>: diff per db<br/>exit 3 on drift"]:::tool
+  end
+
+  subgraph s4["4 · apply · sync --apply"]
     direction TB
-    edit["<b>user grant / revoke / offboard</b><br/>or edit grants by hand"] --> commit["review and commit<br/>dbs/*.yaml"]
-  end
-  subgraph check["3 · check (you or CI)"]
-    sync["<b>sync</b>: what differs, per db<br/>exit 3 on drift"]
-  end
-  subgraph apply["4 · sync --apply"]
-    direction TB
-    subgraph users["users"]
-      direction TB
-      differs{"roles list in<br/>values.yaml differs?"}
-      differs -- yes --> pr["opens a PR per GitOps repo"]
-      pr --> merge(["a person merges it"])
-      merge --> rollout["GitOps syncs,<br/>CNPG creates / drops roles"]
-      rollout --> pw["sets passwords<br/>from the store"]
-      differs -- no --> pw
+    subgraph u["4a · users"]
+      direction LR
+      q{"roles list<br/>changed?"}:::tool
+      q -- yes --> pr["PR per<br/>GitOps repo"]:::tool --> merge["review + merge"]:::person --> cnpg["GitOps syncs<br/>CNPG sets roles"]:::ext --> pw["set passwords<br/>from the store"]:::tool
+      q -- no --> pw
     end
-    subgraph grants["grants"]
-      direction TB
-      confirm(["you confirm"]) --> sql["runs GRANT / REVOKE"]
+    subgraph g["4b · grants"]
+      direction LR
+      ok["confirm once"]:::person --> sql["GRANT / REVOKE"]:::tool
     end
-    users --> grants
+    u --> g
   end
-  once --> change --> check --> apply
-  apply -.-> later(["later drift, e.g. a migration:<br/>run <b>sync</b> again, back to 3"])
+
+  subgraph s5["5 · later · apps change grants → drift"]
+    direction LR
+    again["run <b>sync</b> again<br/>(back to step 3)"]:::ext
+  end
+
+  s1 --> s2 --> s3 --> s4 -.-> s5
+  class s1,s2,s3,s4,s5,u,g,legend stage
 ```
 
 `sync --apply` only opens a PR when a cluster's roles list actually has to change; otherwise it goes straight to passwords and grants.
