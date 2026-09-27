@@ -82,7 +82,8 @@ mkdir clusters && cat > clusters/cloudnative-pg.my-app.prod.yaml <<'EOF'
 context: my-kube-context
 namespace: my-app
 cluster: cloudnative-pg
-repo: my-org/argocd
+repo: my-org/argocd                # GitHub owner/repo or GitLab group/project
+repo_provider: github              # or gitlab
 values_file: prod/my-app/cloudnative-pg/values.yaml
 values_roles_path: roles           # see Files below
 EOF
