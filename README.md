@@ -39,7 +39,7 @@ flowchart TD
     users --> grants
   end
   once --> change --> check --> apply
-  apply -. "later drift, e.g. a migration" .-> check
+  apply -.-> later(["later drift, e.g. a migration:<br/>run <b>sync</b> again, back to 3"])
 ```
 
 `sync --apply` only opens a PR when a cluster's roles list actually has to change; otherwise it goes straight to passwords and grants.
