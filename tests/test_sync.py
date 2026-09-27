@@ -56,12 +56,12 @@ def test_nothing_to_apply():
     assert apply_grants([GrantsPlan(db, c, [])]) is False and c.ran == []
 
 
-def test_execute_batches_in_transactions():
+def test_execute_runs_one_transaction():
     cluster = Cluster.__new__(Cluster)  # no kube connection
     sent = []
     cluster.psql = lambda sql, database=None: sent.append((database, sql))
     stmts = [f"GRANT SELECT ON TABLE public.t{i} TO x;" for i in range(10)]
-    cluster.execute(stmts, "app", batch_chars=120)
-    assert all(sql.startswith("BEGIN;\n") and sql.endswith("\nCOMMIT;") and db == "app" for db, sql in sent)
-    assert len(sent) > 1
-    assert [line for _, sql in sent for line in sql.splitlines()[1:-1]] == stmts
+    cluster.execute(stmts, "app")
+    assert sent == [("app", "BEGIN;\n" + "\n".join(stmts) + "\nCOMMIT;")]
+    cluster.execute([], "app")
+    assert len(sent) == 1

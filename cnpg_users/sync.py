@@ -88,7 +88,7 @@ def confirm(question: str, assume_yes: bool, ask: Callable[[str], str] = input) 
 
 def apply_grants(plans: list[GrantsPlan], assume_yes: bool = False,
                  ask: Callable[[str], str] = input) -> bool:
-    """Run each database's statements (one transaction per batch), then read it
+    """Run each database's statements (one transaction per database), then read it
     again. True if anything still differs (or nothing was applied)."""
     pending = [(p, d) for p in plans for d in p.databases]
     if not pending:

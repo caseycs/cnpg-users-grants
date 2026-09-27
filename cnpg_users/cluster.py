@@ -48,10 +48,12 @@ class Cluster:
             return []
 
     def psql(self, sql: str, database: str | None = None) -> str:
-        cmd = ["psql", "-U", "postgres"]
+        """Run sql with psql on the primary. The SQL goes over stdin, not the
+        command line: exec arguments end up in the API server audit log (and
+        in the pod's process list), which password verifiers must not."""
+        cmd = ["psql", "-X", "-q", "-tA", "-v", "ON_ERROR_STOP=1", "-U", "postgres"]
         if database:
             cmd += ["-d", database]
-        cmd += ["-tAc", sql]
         where = f"pod {self.primary}{f', db {database}' if database else ''}"
         try:
             resp = k8s_stream(
@@ -61,13 +63,16 @@ class Cluster:
                 command=cmd,
                 container="postgres",
                 stderr=True,
-                stdin=False,
+                stdin=True,
                 stdout=True,
                 tty=False,
                 _preload_content=False,
             )
         except k8s_client.ApiException as exc:
             sys.exit(f"error execing into {where}: {exc.reason}")
+        # the exec stream can't close stdin, so psql is told to quit instead;
+        # the lone ';' ends a last statement written without one
+        resp.write_stdin(sql.rstrip() + "\n;\n\\q\n")
         resp.run_forever(timeout=120)
         out = resp.read_channel(STDOUT_CHANNEL)
         status_raw = resp.read_channel(ERROR_CHANNEL)
@@ -80,19 +85,10 @@ class Cluster:
             sys.exit(f"psql on {self.db.name} ({where}) failed: {(err or status_raw or '').strip()}")
         return out
 
-    def execute(self, statements: list[str], database: str, batch_chars: int = 60_000) -> None:
-        """Run statements in `database`, one transaction per batch (a batch is
-        one psql -c, kept well under the exec argument size limit)."""
-        batch: list[str] = []
-        size = 0
-        for s in statements + [None]:
-            if s is None or (batch and size + len(s) > batch_chars):
-                if batch:
-                    self.psql("BEGIN;\n" + "\n".join(batch) + "\nCOMMIT;", database=database)
-                batch, size = [], 0
-            if s is not None:
-                batch.append(s)
-                size += len(s) + 1
+    def execute(self, statements: list[str], database: str) -> None:
+        """Run statements in `database` in one transaction."""
+        if statements:
+            self.psql("BEGIN;\n" + "\n".join(statements) + "\nCOMMIT;", database=database)
 
     def sql(self, sql: str, database: str | None = None):
         out = self.psql(sql, database=database)
@@ -136,7 +132,7 @@ class Cluster:
     def set_passwords(self, statements: list[str]) -> None:
         """Run ALTER ROLE ... PASSWORD statements in one transaction, with
         statement logging off so even the verifiers stay out of the logs."""
-        self.psql("SET log_statement = 'none'; " + " ".join(statements))
+        self.psql("BEGIN;\nSET LOCAL log_statement = 'none';\n" + "\n".join(statements) + "\nCOMMIT;")
 
     def password_verifiers(self, names: list[str]) -> dict[str, str]:
         """role -> stored verifier ('' without a password) for the existing roles in names."""
