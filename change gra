@@ -56,13 +56,8 @@ flowchart TB
     u --> g
   end
 
-  subgraph s5["5 · later · apps change grants → drift"]
-    direction LR
-    again["run <b>sync</b> again<br/>(back to step 3)"]:::ext
-  end
-
-  s1 --> s2 --> s3 --> s4 -.-> s5
-  class s1,s2,s3,s4,s5,u,g,legend stage
+  s1 --> s2 --> s3 --> s4
+  class s1,s2,s3,s4,u,g,legend stage
 ```
 
 ## Quick start
