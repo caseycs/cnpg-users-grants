@@ -1,15 +1,16 @@
 # cnpg-users-grants
 
-Access control for [CloudNativePG](https://cloudnative-pg.io), for small and medium teams running several clusters through GitOps: manage people's access on every cluster from one place, and keep application roles' grants in code with drift detection.
+Access control for [CloudNativePG](https://cloudnative-pg.io) clusters deployed through GitOps: manage people's access on every cluster from one place, and keep application roles' grants in code with drift detection.
 
 Nothing changes a database or repo unless you pass `--apply`. Postgres is reached through `kubectl exec` into the primary pod, so a kubeconfig is all it needs: no network path to the database and no database credentials.
 
 ## Approach
 
 - **One place for human roles.** Which people have a role on which cluster, and with what memberships, is tracked in `clusters/`, one file per CNPG cluster. `user grant` / `revoke` / `offboard` edit them across all clusters at once, and the tool turns those edits into one PR per GitOps repo. App roles stay wherever they're declared now; they're only listed by name.
-- **CNPG manages the roles.** Human roles are declared as the cluster's [managed roles](https://cloudnative-pg.io/documentation/current/declarative_role_management/) in its values file, and the operator creates, alters and drops them. The tool never does that over SQL; it changes the declaration.
+- **CNPG manages the roles.** Human roles are declared as the cluster's [managed roles](https://cloudnative-pg.io/documentation/current/declarative_role_management/) in whatever YAML your GitOps repo deploys it from, and the operator creates, alters and drops them. The tool never does that over SQL; it changes the declaration.
 - **Passwords stored centrally.** Each person's password lives once in your secret store (AWS SSM, GCP Secret Manager or sops). A cluster only receives the SCRAM verifier, which Postgres keeps anyway, so no cluster holds a plaintext copy in a Kubernetes Secret.
 - **Grants as code, with drift detection.** CNPG has no declaration for grants, so every role's grants, apps included, are kept in the cluster files; `import` snapshots them from the live cluster. `sync-grants` prints the `GRANT`/`REVOKE` that fixes any drift and exits non-zero, so it fits CI.
+- **Run by people, from their machines.** It's a CLI that uses your own kubeconfig, Git login and store access, with nothing to deploy. Changes stay small and reviewed, which suits small and medium teams where a few people look after database access.
 
 ## Workflow
 
@@ -105,7 +106,7 @@ uvx --from git+https://github.com/caseycs/cnpg-users-grants@v0.2.0 cnpg-users sy
 | `sync [<cluster>…] [--apply]` | Both of the below in one run: one report per cluster with users and grants; `--apply` does the users flow first, then grants (asks first). |
 | `sync-grants [<cluster>…]` | Print the SQL that makes live grants match the file. |
 | `sync-grants --apply [--yes]` | Run it: asks first (`--yes` skips, e.g. in CI), one transaction per database, then re-checks. |
-| `sync-users [<cluster>…]` | Print the values.yaml change and password statements for humans. |
+| `sync-users [<cluster>…]` | Print the roles-list change and password statements for humans. |
 | `sync-users --apply` | Open one PR per GitOps repo, wait for a person to merge it and GitOps to sync it, then set passwords. |
 | `user grant <name> <cluster>… [--role R]… [--superuser]` | Add or update a human in these cluster files (default role `pg_read_all_data`). |
 | `user revoke <name> <cluster>…` | Mark the human `ensure: absent` there and drop their `grants:`. |
@@ -126,7 +127,7 @@ cnpg-users sync-users --apply                                    # 2. PR adds th
 ```sh
 cnpg-users user offboard alice                                   # 1. ensure: absent + her grants removed, everywhere
 cnpg-users sync-users                                            #    shows what still blocks dropping her role
-cnpg-users sync-users --apply                                    # 2. PR marks her role ensure: absent in values.yaml
+cnpg-users sync-users --apply                                    # 2. PR marks her role ensure: absent in the roles list
 cnpg-users sync-grants --apply                                   #    REVOKE the grants she still holds
 ```
 
@@ -142,11 +143,11 @@ CNPG can't drop a role that still owns objects or holds privileges. `sync-users`
 context: my-kube-context           # kubeconfig context
 namespace: my-app
 cluster: cloudnative-pg            # CNPG Cluster name
-repo: my-org/argocd                # where the CNPG values.yaml lives: GitHub owner/repo or GitLab group/project
+repo: my-org/argocd                # GitOps repo holding values_file: GitHub owner/repo or GitLab group/project
 repo_provider: github              # or gitlab (default: github)
 gitlab_host: gitlab.example.com    # self-managed GitLab (default: glab's configured host)
-values_file: prod/my-app/cloudnative-pg/values.yaml
-values_roles_path: roles           # dotted path to the CNPG roles list in values_file: roles (default), or cluster.roles if nested
+values_file: prod/my-app/cloudnative-pg/values.yaml   # plain single-document YAML with the CNPG roles list: Cluster manifest, Helm values, Kustomize patch, …
+values_roles_path: roles           # dotted path to that list: roles (default), cluster.roles (a chart nesting it), spec.managed.roles (a Cluster manifest)
 online: true                       # false: skip this cluster
 ignored_grantees: [pg_monitor]     # skip these roles' table/sequence grants (schema, database and default privileges still managed)
 humans:
