@@ -18,6 +18,7 @@ Humans have a second problem. Every cluster keeps its roles list in its own valu
 - **One place for human roles.** Which people have a role on which cluster, and with what memberships, is tracked in `clusters/`, one file per CNPG cluster. `user grant` / `revoke` / `offboard` edit them across all clusters at once, and the tool turns those edits into one PR per GitOps repo. App roles stay wherever they're declared now; they're only listed by name.
 - **CNPG manages the roles.** Human roles are declared as the cluster's [managed roles](https://cloudnative-pg.io/documentation/current/declarative_role_management/) in its values file, and the operator creates, alters and drops them. The tool never does that over SQL; it changes the declaration.
 - **Passwords stored centrally.** Each person's password lives once in your secret store. A cluster only receives the SCRAM verifier, which Postgres keeps anyway, so no cluster holds a plaintext copy in a Kubernetes Secret.
+- **Grants as code, with drift detection.** Every role's grants, apps included, are kept in the cluster files, since CNPG has no declaration for them. `sync-grants` compares them with the live databases and exits non-zero on drift, printing the `GRANT`/`REVOKE` to fix it.
 
 **Scope.** The users half assumes a GitHub repo (via `gh`) holding each cluster's Helm values file with its CNPG roles list. `sync-grants` needs only kubeconfig access. `import` also reads the password store, to tell humans from apps.
 
