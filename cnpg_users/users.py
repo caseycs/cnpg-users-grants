@@ -129,7 +129,18 @@ def plan_users(db: DbConfig, store: PasswordStore, apply: bool = False,
         return False, None
     if not (db.repo and db.values_file):
         sys.exit(f"{db.path}: repo and values_file are required for sync-users")
+    body, drift, p = users_body(db, store, apply)
+    if not body:
+        print(f"{db.header}: {'values.yaml in sync' if apply else 'in sync'}", file=out)
+    else:
+        print(db.header, file=out)
+        print(body, end="", file=out)
+    return drift, p
 
+
+def users_body(db: DbConfig, store: PasswordStore, apply: bool = False) -> tuple[str, bool, UsersPlan]:
+    """The users part of a report ('' if in sync), whether anything differs,
+    and the plan for apply_all. db must be online with repo/values_file."""
     try:
         current = get_file(db.repo, db.values_file)
     except GitHubError as exc:
@@ -160,12 +171,7 @@ def plan_users(db: DbConfig, store: PasswordStore, apply: bool = False,
             print("  statements:", file=body)
             for st in statements:
                 print(f"    {st}", file=body)
-    if not body.getvalue():
-        print(f"{db.header}: {'values.yaml in sync' if apply else 'in sync'}", file=out)
-    else:
-        print(db.header, file=out)
-        print(body.getvalue(), end="", file=out)
-    return p.values_pending or bool(statements) or bool(blocked), p
+    return body.getvalue(), p.values_pending or bool(statements) or bool(blocked), p
 
 
 def apply_all(plans: list[UsersPlan], store: PasswordStore, timeout: float = 180) -> bool:

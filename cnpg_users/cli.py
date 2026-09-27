@@ -14,6 +14,10 @@ Commands:
     import <db>        Explore live roles and grants, classify every
                        non-system role as human or app, print a report and a
                        diff against dbs/<db>.yaml; --write updates it.
+    sync [<db>...] [--parallel N] [--apply [--yes] [--apply-timeout S]]
+                       sync-users and sync-grants in one run: one report per
+                       db with both parts; --apply does the users flow first,
+                       then the grants (after a confirmation).
     sync-grants [<db>...] [--parallel N] [--apply [--yes]]
                        (default: every dbs/*.yaml; N at a time, default 4,
                        printed in order)
@@ -64,6 +68,7 @@ from .config import list_db_names, load_db_config
 from .stores import load_store
 from .importer import cmd_import
 from .sync import apply_grants, cmd_sync_grants
+from .sync_all import apply_sync, cmd_sync
 from .runner import MAX_WORKERS, run_in_order
 from .people import cmd_user
 from .users import apply_all, plan_users
@@ -108,6 +113,18 @@ def main() -> None:
     users.add_argument("--apply-timeout", type=float, default=180, metavar="SECONDS",
                        help="how long to wait for the PR to be merged and synced (default: 180)")
 
+    both = commands.add_parser(
+        "sync", help="users and grants for every db at once: report; --apply opens PRs, sets passwords, runs grant SQL",
+    )
+    both.add_argument("db", nargs="*", help="database names or dbs/ file paths (default: every dbs/*.yaml)")
+    both.add_argument("--parallel", type=positive_int, default=MAX_WORKERS, metavar="N",
+                      help=f"how many dbs to read at once (default: {MAX_WORKERS})")
+    both.add_argument("--apply", action="store_true",
+                      help="users first (PR per GitOps repo, wait for the merge, passwords), then grants (asks first)")
+    both.add_argument("--apply-timeout", type=float, default=180, metavar="SECONDS",
+                      help="how long to wait for the PRs to be merged and synced (default: 180)")
+    both.add_argument("--yes", action="store_true", help="with --apply: don't ask before running grant SQL")
+
     user = commands.add_parser("user", help="grant/revoke/offboard humans in the db files (config only; apply with sync-users)")
     user_cmds = user.add_subparsers(dest="action", required=True)
     g = user_cmds.add_parser("grant", help="make NAME a human in these db files")
@@ -140,6 +157,13 @@ def main() -> None:
             max_workers=args.parallel,
         ))
     store = load_store(root)
+    if args.command == "sync":
+        sys.exit(run_in_order(
+            dbs,
+            lambda db, out: cmd_sync(db, store, args.apply, out=out),
+            after=(lambda plans: apply_sync(plans, store, args.apply_timeout, args.yes)) if args.apply else None,
+            max_workers=args.parallel,
+        ))
     sys.exit(run_in_order(
         dbs,
         lambda db, out: plan_users(db, store, args.apply, out=out),
