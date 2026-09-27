@@ -157,7 +157,13 @@ A role's privileges on objects it owns are implicit and never listed. `import` c
 
 ## Development
 
+Needs [Task](https://taskfile.dev); integration tests also need Docker and [kind](https://kind.sigs.k8s.io).
+
 ```sh
-uv run pytest                    # tests
+task                             # unit tests (same as: task test)
+task test:integration            # kind cluster + CNPG operator, then end-to-end tests against it
+task kind:down                   # delete the kind cluster
 uv run cnpg-users sync-grants    # run from the checkout (configs from the current directory)
 ```
+
+The integration tests create a throwaway namespace with a one-instance CNPG `Cluster` and run `import`, `sync-grants --apply`, `sync-users` passwords (including a real login) and the drop-blocker report against it. GitHub and AWS SSM are faked. `CNPG_IT_KEEP=1` keeps the namespace for debugging.

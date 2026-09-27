@@ -22,3 +22,5 @@ dev = ["pytest"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+addopts = "-m 'not integration'"  # task test:integration runs them against kind
+markers = ["integration: needs a Kubernetes cluster with the CNPG operator (CNPG_IT_CONTEXT)"]

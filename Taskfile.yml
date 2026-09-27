@@ -1,0 +1,36 @@
+version: "3"
+
+vars:
+  KIND_CLUSTER: cnpg-users-it
+  KIND_CONTEXT: kind-{{.KIND_CLUSTER}}
+  CNPG_VERSION: 1.30.1
+
+tasks:
+  default:
+    cmds:
+      - task: test
+
+  test:
+    desc: Unit tests
+    cmds:
+      - uv run pytest {{.CLI_ARGS}}
+
+  test:integration:
+    desc: Integration tests against a real CNPG operator on kind
+    deps: [kind:up]
+    cmds:
+      - CNPG_IT_CONTEXT={{.KIND_CONTEXT}} uv run pytest -m integration tests/integration {{.CLI_ARGS}}
+
+  kind:up:
+    desc: "Create the kind cluster and install the CNPG operator (idempotent)"
+    cmds:
+      - kind get clusters | grep -qx {{.KIND_CLUSTER}} || kind create cluster --name {{.KIND_CLUSTER}} --wait 120s
+      - >-
+        kubectl --context {{.KIND_CONTEXT}} apply --server-side -f
+        https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v{{.CNPG_VERSION}}/cnpg-{{.CNPG_VERSION}}.yaml
+      - kubectl --context {{.KIND_CONTEXT}} -n cnpg-system rollout status deployment/cnpg-controller-manager --timeout=180s
+
+  kind:down:
+    desc: Delete the kind cluster
+    cmds:
+      - kind delete cluster --name {{.KIND_CLUSTER}}
