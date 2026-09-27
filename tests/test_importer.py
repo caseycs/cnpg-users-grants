@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 
 from cnpg_users.config import list_db_names, load_db_config
 from cnpg_users.grants import Catalog, drop_ignored, live_grants, plan
@@ -133,3 +134,14 @@ def test_update_config(tmp_path):
 
 def test_header(tmp_path):
     assert write_config(tmp_path).header == "pg.ns.env (cluster pg in ns ns)"
+
+
+def test_repo_provider(tmp_path):
+    write_config(tmp_path)
+    assert load_db_config(tmp_path, "pg.ns.env").repo_provider == "github"
+    (tmp_path / "clusters" / "gl.yaml").write_text(DB_YAML + "repo_provider: gitlab\ngitlab_host: git.example.com\n")
+    db = load_db_config(tmp_path, "gl")
+    assert (db.repo_provider, db.gitlab_host) == ("gitlab", "git.example.com")
+    (tmp_path / "clusters" / "bad.yaml").write_text(DB_YAML + "repo_provider: bitbucket\n")
+    with pytest.raises(SystemExit, match="repo_provider must be one of github, gitlab"):
+        load_db_config(tmp_path, "bad")

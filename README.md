@@ -66,7 +66,7 @@ flowchart TB
 
 ## Quick start
 
-Requires [uv](https://docs.astral.sh/uv/) and a kubeconfig with access to the clusters; that's all `sync-grants` needs. `import` also reads the password store, and managing humans needs `gh` logged in with access to the GitOps repos, where each cluster's CNPG roles list sits in a Helm values file.
+Requires [uv](https://docs.astral.sh/uv/) and a kubeconfig with access to the clusters; that's all `sync-grants` needs. `import` also reads the password store, and managing humans needs `gh` (GitHub) or `glab` (GitLab) logged in with access to the GitOps repos, where each cluster's CNPG roles list sits in a Helm values file.
 
 <!-- x-release-please-start-version -->
 ```sh
@@ -130,7 +130,7 @@ cnpg-users sync-users --apply                                    # 2. PR marks h
 cnpg-users sync-grants --apply                                   #    REVOKE the grants she still holds
 ```
 
-`sync-users --apply` labels its PRs `cnpg-users-grants` and updates an open one instead of opening another. It then checks the clusters every 10 seconds for up to `--apply-timeout` (default 180 s) and sets passwords once the roles exist. If nobody merges in time, it stops; run it again after the merge.
+`sync-users --apply` labels its PRs (merge requests on GitLab) `cnpg-users-grants` and updates an open one instead of opening another. It then checks the clusters every 10 seconds for up to `--apply-timeout` (default 180 s) and sets passwords once the roles exist. If nobody merges in time, it stops; run it again after the merge.
 
 CNPG can't drop a role that still owns objects or holds privileges. `sync-users` lists those per database with the `REASSIGN OWNED … DROP OWNED …` to run first. Roles are cluster-wide, so a human in a cluster file can log in to every database of that cluster; `grants:` are per database. Passwords are generated in the store on first `--apply` if missing, and aren't deleted on offboarding.
 
@@ -142,7 +142,9 @@ CNPG can't drop a role that still owns objects or holds privileges. `sync-users`
 context: my-kube-context           # kubeconfig context
 namespace: my-app
 cluster: cloudnative-pg            # CNPG Cluster name
-repo: my-org/argocd                # where the CNPG values.yaml lives
+repo: my-org/argocd                # where the CNPG values.yaml lives: GitHub owner/repo or GitLab group/project
+repo_provider: github              # or gitlab (default: github)
+gitlab_host: gitlab.example.com    # self-managed GitLab (default: glab's configured host)
 values_file: prod/my-app/cloudnative-pg/values.yaml
 values_roles_path: roles           # dotted path to the CNPG roles list in values_file: roles (default), or cluster.roles if nested
 online: true                       # false: skip this cluster
