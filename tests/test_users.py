@@ -122,7 +122,7 @@ def test_password_plan():
         "ok: in sync",
         "old: differs",
         "nopw: no password set",
-        "nossm: no password in SSM (--apply generates one)",
+        "nossm: no password in the store (--apply generates one)",
         "new: role not created yet — deploy values.yaml, then re-run",
     ]
     assert [s.split(" PASSWORD ")[0] for s in statements] == ['ALTER ROLE "old"', 'ALTER ROLE "nopw"']

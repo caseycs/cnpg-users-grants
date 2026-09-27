@@ -8,10 +8,10 @@ from typing import Callable
 
 from . import queries
 from .cluster import Cluster
-from .config import DbConfig, SsmSettings, make_write_yaml
+from .config import DbConfig, make_write_yaml
 from .diff import print_diff
 from .grants import Catalog, Grant, drop_ignored, format_statements, plan
-from .ssm import ssm_users
+from .stores import PasswordStore
 
 SYSTEM_ROLES = {"postgres", "streaming_replica", "cnpg_pooler_pgbouncer", "app"}
 
@@ -37,11 +37,11 @@ def classify_roles(
     roles: list[dict],
     cluster_cr: dict,
     crd_roles: set[str],
-    ssm_users: set[str],
+    store_users: set[str],
     say: Callable[[str], None] = print,
 ) -> Roles:
     """system/absent -> skipped; DatabaseRole CR or k8s password secret -> app;
-    password in SSM -> human; anything else -> app."""
+    password in the store -> human; anything else -> app."""
     spec = cluster_cr.get("spec") or {}
     mrs = (cluster_cr.get("status") or {}).get("managedRolesStatus") or {}
     secret_synced = {n for n, st in (mrs.get("passwordStatus") or {}).items() if st.get("resourceVersion")}
@@ -70,11 +70,11 @@ def classify_roles(
             app(role, "password via k8s secret")
         elif entry.get("ensure") == "absent":
             out.skipped.append(f"{name} (ensure: absent)")
-        elif name in ssm_users:
+        elif name in store_users:
             out.humans.append(human_entry(role))
-            say(f"  {name}: human (password in SSM)")
+            say(f"  {name}: human (password in the store)")
         else:
-            app(role, "no password in SSM")
+            app(role, "no password in the store")
 
     out.humans.sort(key=lambda h: h["name"])
     out.apps.sort()
@@ -162,7 +162,7 @@ def update_config(db: DbConfig, humans: list[dict], apps: list, grants: dict) ->
     return before, "".join(lines)
 
 
-def cmd_import(db: DbConfig, ssm: SsmSettings, write: bool, prune: bool = False) -> None:
+def cmd_import(db: DbConfig, store: PasswordStore, write: bool, prune: bool = False) -> None:
     if not db.online:
         print(f"{db.header}: offline — skipped")
         return
@@ -184,7 +184,7 @@ def cmd_import(db: DbConfig, ssm: SsmSettings, write: bool, prune: bool = False)
     for name, owner in sorted(crd_databases.items()):
         print(f"  Database CR: {name} (owner {owner})")
 
-    roles = classify_roles(info["roles"], cluster.cr, crd_roles, ssm_users(ssm))
+    roles = classify_roles(info["roles"], cluster.cr, crd_roles, store.names())
 
     humans, human_notes = merge_humans(db.humans, roles.humans, {r["name"] for r in info["roles"]}, prune)
     print("\nhumans:")

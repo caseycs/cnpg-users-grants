@@ -20,7 +20,9 @@ from ruamel.yaml import YAML
 
 from cnpg_users import importer, users
 from cnpg_users.cluster import Cluster
-from cnpg_users.config import SsmSettings, load_db_config
+from types import SimpleNamespace
+
+from cnpg_users.config import load_db_config
 from cnpg_users.github import RepoFile
 from cnpg_users.passwords import password_matches
 from cnpg_users.sync import apply_grants, cmd_sync_grants
@@ -125,6 +127,16 @@ def env(tmp_path_factory):
             core.delete_namespace(ns)
 
 
+def fake_store(passwords: dict[str, str]):
+    """A password store in memory (the real ones are covered by test_stores.py)."""
+    return SimpleNamespace(
+        description="fake store",
+        names=lambda: set(passwords),
+        passwords=lambda names: {n: passwords[n] for n in names if n in passwords},
+        create=lambda name, password: passwords.__setitem__(name, password) or f"fake[{name}]",
+    )
+
+
 def db(env):
     return load_db_config(env["root"], "pg.it.kind")
 
@@ -141,8 +153,7 @@ def sync(env):
 
 
 def test_import_classifies_roles_and_collapses_grants(env, monkeypatch):
-    monkeypatch.setattr(importer, "ssm_users", lambda settings: {"alice"})
-    importer.cmd_import(db(env), SsmSettings(), write=True)
+    importer.cmd_import(db(env), fake_store({"alice": "unused"}), write=True)
 
     config = db(env)
     assert config.humans == [{"name": "alice", "superuser": False, "roles": ["pg_read_all_data"]}]
@@ -194,14 +205,14 @@ def test_new_partition_gets_the_parents_grants(env):
 
 def test_human_password_is_set_as_a_verifier_and_works(env, monkeypatch):
     monkeypatch.setattr(users, "get_file", lambda repo, path: RepoFile(VALUES_YAML, "sha"))
-    monkeypatch.setattr(users, "ssm_passwords", lambda settings, names: {"alice": "alice-pw-1"})
+    store = fake_store({"alice": "alice-pw-1"})
     out = io.StringIO()
-    drift, plan = users.plan_users(db(env), SsmSettings(), out=out)
+    drift, plan = users.plan_users(db(env), store, out=out)
     assert drift
     assert "alice: no password set" in out.getvalue()
     assert "alice-pw-1" not in out.getvalue()
 
-    assert users.set_passwords(plan, SsmSettings()) is False
+    assert users.set_passwords(plan, store) is False
     verifier = env["cluster"].password_verifiers(["alice"])["alice"]
     assert verifier.startswith("SCRAM-SHA-256$") and password_matches("alice-pw-1", "alice", verifier)
 
@@ -217,14 +228,14 @@ def test_human_password_is_set_as_a_verifier_and_works(env, monkeypatch):
 
 def test_values_diff_marks_revoked_human_absent(env, monkeypatch):
     monkeypatch.setattr(users, "get_file", lambda repo, path: RepoFile(VALUES_YAML, "sha"))
-    monkeypatch.setattr(users, "ssm_passwords", lambda settings, names: {})
+
     path = db(env).path
     path.write_text(path.read_text().replace(
         "  - name: alice\n    superuser: false\n    roles:\n      - pg_read_all_data\n",
         "  - name: alice\n    ensure: absent\n",
     ))
     out = io.StringIO()
-    drift, plan = users.plan_users(db(env), SsmSettings(), out=out)
+    drift, plan = users.plan_users(db(env), fake_store({}), out=out)
     assert drift and plan.change.absent == ["alice"]
     assert "+    ensure: absent" in out.getvalue()
 

@@ -2,8 +2,9 @@
 
 Config layout (read from the current directory):
     user_passwords_store.yaml
-                      aws_profile, aws_region, aws_ssm_prefix of the SSM
-                      parameters holding human passwords (used by import)
+                      where human passwords live: type aws-ssm (aws_profile,
+                      aws_region, aws_ssm_prefix), gcp-secret-manager
+                      (gcp_project, gcp_secret_prefix) or sops (sops_file)
     dbs/<db>.yaml     one file per database: context, namespace, cluster,
                       repo, values_file, values_roles_path, ignored_grantees,
                       humans, apps,
@@ -26,7 +27,7 @@ Commands:
                        humans:/apps: (humans present with their
                        superuser/roles, every other non-app role ensure:
                        absent), and ALTER ROLE statements for humans whose
-                       password differs from SSM (as a SCRAM verifier, never
+                       password differs from the store (as a SCRAM verifier, never
                        the plaintext). Same exit codes as sync-grants.
                        --apply, after reading every db: one PR per repo with
                        all its values.yaml changes, labeled
@@ -40,14 +41,14 @@ Commands:
 Table and sequence grants to a db file's ignored_grantees are left out of both
 commands; their schema, database and default privileges are still managed.
 
-Classification (live cluster object + SSM parameter names):
+Classification (live cluster object + names in the password store):
     - system roles (pg_*/cnpg_* builtins, Cluster status reserved) → skipped
     - DatabaseRole CRs → app, managed elsewhere, never touched
     - password via k8s secret: secret-synced (Cluster status passwordStatus
       resourceVersion), a passwordSecret reference in the Cluster spec, or
       the bootstrap owner with its initdb secret → app
     - ensure: absent in the Cluster's managed roles → skipped
-    - password parameter <prefix><role> in SSM (user_passwords_store.yaml)
+    - a password in the store (user_passwords_store.yaml)
       → human (superuser flag and role memberships from the live role)
     - everything else → app
 
@@ -59,7 +60,8 @@ import os
 import sys
 from pathlib import Path
 
-from .config import list_db_names, load_db_config, load_ssm_settings
+from .config import list_db_names, load_db_config
+from .stores import load_store
 from .importer import cmd_import
 from .sync import apply_grants, cmd_sync_grants
 from .runner import MAX_WORKERS, run_in_order
@@ -127,7 +129,7 @@ def main() -> None:
     if args.command == "user":
         sys.exit(cmd_user(args, root))
     if args.command == "import":
-        cmd_import(load_db_config(root, args.db), load_ssm_settings(root), args.write, args.prune)
+        cmd_import(load_db_config(root, args.db), load_store(root), args.write, args.prune)
         return
 
     dbs = [load_db_config(root, name) for name in (args.db or list_db_names(root))]
@@ -137,11 +139,11 @@ def main() -> None:
             after=(lambda plans: apply_grants(plans, args.yes)) if args.apply else None,
             max_workers=args.parallel,
         ))
-    ssm = load_ssm_settings(root)
+    store = load_store(root)
     sys.exit(run_in_order(
         dbs,
-        lambda db, out: plan_users(db, ssm, args.apply, out=out),
-        after=(lambda plans: apply_all(plans, ssm, args.apply_timeout)) if args.apply else None,
+        lambda db, out: plan_users(db, store, args.apply, out=out),
+        after=(lambda plans: apply_all(plans, store, args.apply_timeout)) if args.apply else None,
         max_workers=args.parallel,
     ))
 

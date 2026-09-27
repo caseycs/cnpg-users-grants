@@ -1,4 +1,5 @@
 import base64
+from types import SimpleNamespace
 
 import pytest
 
@@ -148,7 +149,6 @@ def test_waiting_line():
 
 
 def test_apply_all_one_pr_per_repo_then_one_wait(monkeypatch, capsys):
-    from types import SimpleNamespace
 
     from cnpg_users import users
     from cnpg_users.github import RepoFile
@@ -182,12 +182,12 @@ def test_apply_all_one_pr_per_repo_then_one_wait(monkeypatch, capsys):
     monkeypatch.setattr(users, "open_pr", lambda repo, changes, branch, title, body:
                         prs.append((repo, [c.path for c in changes], branch, title))
                         or github.PullRequest(f"https://pr/{repo}", "opened"))
-    monkeypatch.setattr(users, "ssm_passwords", lambda ssm, names: {n: "pw" for n in names})
+    store = SimpleNamespace(passwords=lambda names: {n: "pw" for n in names}, description="fake")
     waits = []
     monkeypatch.setattr(users, "wait_for_roles", lambda existing, present, absent, timeout, report:
                         waits.append((sorted(present), sorted(absent), sorted(existing(present + absent)))) or (set(), set()))
 
-    assert users.apply_all(plans, ssm=None, timeout=5) is False
+    assert users.apply_all(plans, store, timeout=5) is False
     assert prs == [("o/argocd", ["devel/values.yaml", "prod/values.yaml"], "cnpg-users/sync", "cnpg users: sync devel, prod")]
     assert waits == [(["devel/erin", "prod/heidi"], ["devel/frank"], ["devel/erin", "prod/heidi"])]
     out = capsys.readouterr().out
