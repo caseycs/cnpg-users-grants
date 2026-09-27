@@ -66,7 +66,7 @@ flowchart TB
 
 ## Quick start
 
-Requires [uv](https://docs.astral.sh/uv/) and a kubeconfig with access to the clusters; that's all `sync-grants` needs. `import` also reads the password store, and managing humans needs `gh` (GitHub) or `glab` (GitLab) logged in with access to the GitOps repos, where each cluster's CNPG roles list sits in a Helm values file.
+Requires [uv](https://docs.astral.sh/uv/) and a kubeconfig with access to the clusters; that's all `sync-grants` needs. `import` also reads the password store, and managing humans needs `gh` (GitHub) or `glab` (GitLab) logged in with access to the GitOps repos.
 
 <!-- x-release-please-start-version -->
 ```sh
