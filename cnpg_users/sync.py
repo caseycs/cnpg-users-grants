@@ -11,14 +11,14 @@ from .grants import drop_ignored, format_statements, plan
 
 
 def cmd_sync_grants(db: DbConfig, out: TextIO = sys.stdout) -> tuple[bool, None]:
-    """Write the SQL per database to out; (True if live grants differ from the config, None)."""
-    print(db.header, file=out)
+    """Write the SQL for the databases that aren't in sync to out (one line if
+    all are); (True if live grants differ from the config, None)."""
     if not db.online:
-        print("(offline — skipped)", file=out)
+        print(f"{db.header}: offline — skipped", file=out)
         return False, None
 
     cluster = Cluster(db)
-    drift = False
+    lines: list[str] = []
     for database in cluster.databases():
         stmts = [s for per_user in (db.grants.get(database) or {}).values() for s in per_user or []]
         live = drop_ignored(cluster.live_grants(database), db.ignored_grantees)
@@ -28,17 +28,19 @@ def cmd_sync_grants(db: DbConfig, out: TextIO = sys.stdout) -> tuple[bool, None]
         except ValueError as exc:
             sys.exit(f"{db.path}: grants.{database}: {exc}")
 
-        print(f"  Database: {database}", file=out)
         if not (to_grant or to_revoke):
-            print("    (in sync)", file=out)
             continue
-        drift = True
-        for title, lines in (
+        lines.append(f"  Database: {database}")
+        for title, stmts in (
             ("To add", format_statements(to_grant, catalog)),
             ("To remove", format_statements(to_revoke, catalog, revoke=True)),
         ):
-            if lines:
-                print(f"    {title}:", file=out)
-                for s in lines:
-                    print(f"      {s}", file=out)
-    return drift, None
+            if stmts:
+                lines.append(f"    {title}:")
+                lines += [f"      {s}" for s in stmts]
+    if not lines:
+        print(f"{db.header}: in sync", file=out)
+        return False, None
+    print(db.header, file=out)
+    print("\n".join(lines), file=out)
+    return True, None

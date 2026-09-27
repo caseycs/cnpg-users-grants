@@ -1,5 +1,6 @@
-"""Files next to cnpg-users.py: dbs/<db>.yaml (one per database) and
-user_passwords_store.yaml (where human passwords live, read by import)."""
+"""Files in the directory the tool is run from: dbs/<db>.yaml (one per
+database) and user_passwords_store.yaml (where human passwords live).
+A db given as a .yaml path is also looked up relative to that directory."""
 
 from __future__ import annotations
 

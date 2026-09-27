@@ -7,6 +7,7 @@ then set the passwords."""
 
 from __future__ import annotations
 
+import io
 import sys
 import time
 from dataclasses import dataclass
@@ -104,12 +105,12 @@ class UsersPlan:
 
 def plan_users(db: DbConfig, ssm: SsmSettings, apply: bool = False,
                out: TextIO = sys.stdout) -> tuple[bool, UsersPlan | None]:
-    """Read phase (safe to run in parallel): write the values.yaml diff to
-    out and, without apply, the password status and statements. Returns
-    (anything differs, plan for apply_users)."""
-    print(db.header, file=out)
+    """Read phase (safe to run in parallel): write what isn't in sync to out
+    (the values.yaml diff and, without apply, passwords that differ and
+    their statements), or one line if everything is. Returns (anything
+    differs, plan for apply_all)."""
     if not db.online:
-        print("(offline — skipped)", file=out)
+        print(f"{db.header}: offline — skipped", file=out)
         return False, None
     if not (db.repo and db.values_file):
         sys.exit(f"{db.path}: repo and values_file are required for sync-users")
@@ -122,20 +123,28 @@ def plan_users(db: DbConfig, ssm: SsmSettings, apply: bool = False,
         change = sync_roles(current.text, db.humans, db.apps, db.values_roles_path)
     except ValueError as exc:
         sys.exit(f"{db.repo}:{db.values_file}: {exc}")
-    print(f"  values.yaml ({db.repo}):", file=out)
-    print_diff(current.text, change.text, db.values_file, indent="    ", out=out)
-
     p = UsersPlan(db, Cluster(db), current, change, [h["name"] for h in db.humans])
-    if apply:  # passwords are checked after the roles are in place
-        return p.values_pending, p
-    statements, status = password_plan(p.names, ssm_passwords(ssm, p.names), p.cluster.password_verifiers(p.names))
-    print("  passwords:", file=out)
-    for line in status:
-        print(f"    {line}", file=out)
-    if statements:
-        print("  statements:", file=out)
-        for st in statements:
-            print(f"    {st}", file=out)
+    body = io.StringIO()
+    if p.values_pending:
+        print(f"  values.yaml ({db.repo}):", file=body)
+        print_diff(current.text, change.text, db.values_file, indent="    ", out=body)
+    statements: list[str] = []
+    if not apply:  # with apply, passwords are checked after the roles are in place
+        statements, status = password_plan(p.names, ssm_passwords(ssm, p.names), p.cluster.password_verifiers(p.names))
+        pending = [line for line in status if not line.endswith(": in sync")]
+        if pending:
+            print("  passwords:", file=body)
+            for line in pending:
+                print(f"    {line}", file=body)
+        if statements:
+            print("  statements:", file=body)
+            for st in statements:
+                print(f"    {st}", file=body)
+    if not body.getvalue():
+        print(f"{db.header}: {'values.yaml in sync' if apply else 'in sync'}", file=out)
+    else:
+        print(db.header, file=out)
+        print(body.getvalue(), end="", file=out)
     return p.values_pending or bool(statements), p
 
 
@@ -209,7 +218,10 @@ def set_passwords(p: UsersPlan, ssm: SsmSettings) -> bool:
             param = ssm_create_password(ssm, name, passwords[name])
             print(f"  generated a password for {name}: stored in SSM as {param}")
     statements, status = password_plan(names, passwords, cluster.password_verifiers(names))
-    for line in status:
+    pending = [line for line in status if not line.endswith(": in sync")]
+    if not pending:
+        print("  in sync")
+    for line in pending:
         print(f"  {line}")
     if not statements:
         return False

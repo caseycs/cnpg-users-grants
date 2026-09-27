@@ -126,10 +126,10 @@ def update_config(db: DbConfig, humans: list[dict], apps: list[str], grants: dic
 
 
 def cmd_import(db: DbConfig, ssm: SsmSettings, write: bool) -> None:
-    print(db.header)
     if not db.online:
-        print("(offline — skipped)")
+        print(f"{db.header}: offline — skipped")
         return
+    print(db.header)
 
     cluster = Cluster(db)
     info = cluster.sql(queries.CLUSTER)

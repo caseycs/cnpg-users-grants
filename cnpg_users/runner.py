@@ -27,6 +27,10 @@ def _status(message: str = "") -> None:
         sys.stderr.flush()
 
 
+def _multiline(text: str) -> bool:
+    return text.rstrip("\n").count("\n") > 0
+
+
 @dataclass
 class Report:
     text: str
@@ -67,7 +71,8 @@ def run_in_order(
                 wait([future], timeout=STATUS_SECONDS)
             _status()
             report = future.result()
-            if i:
+            # a blank line only around multi-line reports; one-liners stay together
+            if i and (_multiline(reports[-1].text) or _multiline(report.text)):
                 print()
             print(report.text, end="", flush=True)
             reports.append(report)

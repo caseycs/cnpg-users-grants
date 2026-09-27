@@ -5,7 +5,7 @@
 # ///
 """Manage CNPG human users and app grants across clusters.
 
-Config layout:
+Config layout (read from the current directory):
     user_passwords_store.yaml
                       aws_profile, aws_region, aws_ssm_prefix of the SSM
                       parameters holding human passwords (used by import)
@@ -105,7 +105,7 @@ def main() -> None:
                        help="how long to wait for the PR to be merged and synced (default: 180)")
 
     args = parser.parse_args()
-    root = Path(__file__).parent
+    root = Path.cwd()  # configs live in the directory the tool is run from
     if args.command == "import":
         cmd_import(load_db_config(root, args.db), load_ssm_settings(root), args.write)
         return

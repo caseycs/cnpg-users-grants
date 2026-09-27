@@ -67,3 +67,9 @@ def test_after_drift_decides_exit_code():
 
 def test_all_in_sync():
     assert run_in_order(["a"], lambda item, out: (False, None)) == 0
+
+
+def test_blank_lines_only_around_multiline_reports(capsys):
+    texts = {"a": "a: in sync\n", "b": "b: in sync\n", "c": "c\n  drift\n", "d": "d: in sync\n"}
+    run_in_order(list(texts), lambda item, out: (print(texts[item], end="", file=out), (False, None))[1])
+    assert capsys.readouterr().out == "a: in sync\nb: in sync\n\nc\n  drift\n\nd: in sync\n"
