@@ -29,6 +29,7 @@ Requires [uv](https://docs.astral.sh/uv/), a kubeconfig with access to the clust
 ```sh
 mkdir cnpg-users-grants && cd cnpg-users-grants   # configs live in the directory you run from
 cat > user_passwords_store.yaml <<'EOF'
+type: aws-ssm                      # or gcp-secret-manager / sops, see Files below
 aws_profile: default
 aws_region: eu-central-1
 aws_ssm_prefix: /cnpg-user/
