@@ -138,3 +138,36 @@ def test_generate_password():
     assert len(pw) == 32 and pw.isalnum()
     assert any(c.isupper() for c in pw) and any(c.isdigit() for c in pw)
     assert generate_password() != pw
+
+
+def nested(text: str) -> str:
+    """VALUES with its roles: list moved under cluster: (one level deeper)."""
+    head, rest = text.split("roles:\n", 1)
+    roles_block, tail = rest.split("\nbackup:", 1)
+    indented = "\n".join(("  " + line) if line else line for line in roles_block.split("\n"))
+    return f"{head}cluster:\n  instances: 3\n  roles:\n{indented}\nbackup:{tail}"
+
+
+def test_sync_roles_nested_path_unchanged_and_absent():
+    text = nested(VALUES)
+    humans = [{"name": "alice", "superuser": False, "roles": ["pg_read_all_data"]}, {"name": "bob", "superuser": True}]
+    assert sync_roles(text, humans, ["webapp", "webapp_owner"], "cluster.roles").text == text
+    change = sync_roles(text, humans[:1], ["webapp", "webapp_owner"], "cluster.roles")
+    assert change.absent == ["bob"]
+    assert change.text == text.replace("    - name: bob\n      ensure: present\n", "    - name: bob\n      ensure: absent\n")
+
+
+def test_sync_roles_nested_path_appends_with_blank_lines():
+    text = nested(VALUES)
+    humans = [{"name": "alice", "superuser": False, "roles": ["pg_read_all_data"]}, {"name": "bob", "superuser": True},
+              {"name": "carol", "superuser": False}]
+    out = sync_roles(text, humans, ["webapp", "webapp_owner"], "cluster.roles").text
+    assert out == text.replace(
+        "\nbackup:",
+        "\n    - name: carol\n      ensure: present\n      login: true\n      superuser: false\n\nbackup:",
+    )
+
+
+def test_sync_roles_missing_path():
+    with pytest.raises(ValueError, match="no list at cluster.roles"):
+        sync_roles(VALUES, [], [], "cluster.roles")

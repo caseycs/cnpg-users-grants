@@ -126,8 +126,7 @@ def update_config(db: DbConfig, humans: list[dict], apps: list[str], grants: dic
 
 
 def cmd_import(db: DbConfig, ssm: SsmSettings, write: bool) -> None:
-    print(f"== {db.name} ==")
-    print(f"cluster {db.cluster} in ns {db.namespace}")
+    print(db.header)
     if not db.online:
         print("(offline — skipped)")
         return

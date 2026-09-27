@@ -138,3 +138,7 @@ def test_update_config(tmp_path):
     )
     # idempotent
     assert update_config(db, humans, ["a", "known_app"], grants) == (after, after)
+
+
+def test_header(tmp_path):
+    assert write_config(tmp_path).header == "pg.ns.env (cluster pg in ns ns)"

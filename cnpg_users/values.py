@@ -60,8 +60,9 @@ class RolesChange:
                 + [f"mark absent {n}" for n in self.absent])
 
 
-def sync_roles(text: str, humans: list[dict], apps: list[str]) -> RolesChange:
-    """values.yaml text with its roles: list matching the db file:
+def sync_roles(text: str, humans: list[dict], apps: list[str], roles_path: str = "roles") -> RolesChange:
+    """values.yaml text with its CNPG roles list (at dotted `roles_path`,
+    e.g. "roles" or "cluster.roles") matching the db file:
     - every human present, with login/superuser/inRoles as in the db file
       (other keys and comments kept; missing humans appended at the end)
     - every other role that isn't an app and has no passwordSecret gets
@@ -69,9 +70,16 @@ def sync_roles(text: str, humans: list[dict], apps: list[str]) -> RolesChange:
     - apps, passwordSecret roles and already-absent roles are left alone."""
     yaml = make_write_yaml()
     doc = yaml.load(text)
-    roles = doc.get("roles")
-    if roles is None:
-        raise ValueError("no roles: list")
+    keys = roles_path.split(".")
+    roles = doc
+    for key in keys:
+        roles = roles.get(key) if isinstance(roles, dict) else None
+    if not isinstance(roles, list):
+        raise ValueError(f"no list at {roles_path}")
+    # block-style indentation of the list (make_write_yaml: 2 per mapping level)
+    key_indent = 2 * (len(keys) - 1)
+    item = " " * (key_indent + 2) + "- name: "
+    field = " " * (key_indent + 4)
 
     by_name = {r.get("name"): r for r in roles}
     wanted = {h["name"]: human_role(h) for h in humans}
@@ -109,22 +117,29 @@ def sync_roles(text: str, humans: list[dict], apps: list[str]) -> RolesChange:
     if added:
         # a blank line before each appended entry, as between the others
         for name in added:
-            out = re.sub(rf"\n+(  - name: {re.escape(name)}\n)", r"\n\n\1", out, count=1)
+            out = re.sub(rf"\n+({item}{re.escape(name)}\n)", r"\n\n\1", out, count=1)
         # ruamel moves the blank line that ended the list in front of the
         # first appended entry; put one back after the last
-        if _blank_after_roles(text):
+        if _blank_after_list(text, keys):
             last = re.escape(added[-1])
-            out = re.sub(rf"(\n  - name: {last}\n(?:    [^\n]*\n)*)(?=\S)", r"\1\n", out, count=1)
+            out = re.sub(rf"(\n{item}{last}\n(?:{field}[^\n]*\n)*)(?=[ ]{{0,{key_indent}}}[^ \n])",
+                         r"\1\n", out, count=1)
     change.text = out
     return change
 
 
-def _blank_after_roles(text: str) -> bool:
-    """Whether the line before the top-level key following roles: is blank."""
+def _blank_after_list(text: str, keys: list[str]) -> bool:
+    """Whether the list under keys (a: b: ... list:) is followed by a blank line."""
     lines = text.splitlines()
-    if "roles:" not in lines:
-        return False
-    for i in range(lines.index("roles:") + 1, len(lines)):
-        if lines[i] and not lines[i][0].isspace() and not lines[i].startswith("#"):
-            return lines[i - 1] == ""
+    i = -1
+    for depth, key in enumerate(keys):  # find each key line inside its parent
+        head = " " * (2 * depth) + key + ":"
+        i = next((j for j in range(i + 1, len(lines)) if lines[j].rstrip() == head), None)
+        if i is None:
+            return False
+    indent = 2 * (len(keys) - 1)
+    for j in range(i + 1, len(lines)):
+        line = lines[j]
+        if line.strip() and not line.lstrip().startswith("#") and len(line) - len(line.lstrip()) <= indent:
+            return lines[j - 1] == ""
     return False

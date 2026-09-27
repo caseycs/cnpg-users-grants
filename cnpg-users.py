@@ -10,28 +10,36 @@ Config layout:
                       aws_profile, aws_region, aws_ssm_prefix of the SSM
                       parameters holding human passwords (used by import)
     dbs/<db>.yaml     one file per database: context, namespace, cluster,
-                      repo, values_file, ignored_grantees, humans, apps,
+                      repo, values_file, values_roles_path, ignored_grantees,
+                      humans, apps,
                       grants
 
 Commands:
     import <db>        Explore live roles and grants, classify every
                        non-system role as human or app, print a report and a
                        diff against dbs/<db>.yaml; --write updates it.
-    sync-grants <db>...|--all
+    sync-grants [<db>...] [--parallel N]
+                       (default: every dbs/*.yaml; N at a time, default 4,
+                       printed in order)
                        Print the GRANT/REVOKE SQL that makes live grants match
                        grants: in dbs/<db>.yaml. Never executes it. Exit code:
                        0 in sync, 3 drift found, 1/2 error/usage.
-    sync-users <db>...|--all
-                       Print the diff that makes the CNPG roles: list in the
-                       repo's values.yaml match humans:/apps: (humans present
-                       with their superuser/roles, every other non-app role
-                       ensure: absent), and ALTER ROLE statements for humans
-                       whose password differs from SSM (as a SCRAM verifier,
-                       never the plaintext). Same exit codes as sync-grants.
-                       --apply: open (or update) a PR per values.yaml, wait
-                       --apply-timeout seconds (default 180) for the roles to
-                       be created/dropped once it's merged and synced, then
-                       run the password statements.
+    sync-users [<db>...] [--parallel N]
+                       Print the diff that makes the CNPG roles list in the
+                       repo's values.yaml (at values_roles_path) match
+                       humans:/apps: (humans present with their
+                       superuser/roles, every other non-app role ensure:
+                       absent), and ALTER ROLE statements for humans whose
+                       password differs from SSM (as a SCRAM verifier, never
+                       the plaintext). Same exit codes as sync-grants.
+                       --apply, after reading every db: one PR per repo with
+                       all its values.yaml changes, labeled
+                       cnpg-users-grants-cli (an open PR with that label is
+                       rewritten, else branch cnpg-users/sync gets a new
+                       one); one wait of --apply-timeout seconds (default
+                       180) for the roles to be created/dropped on every
+                       cluster once merged and synced; then the password
+                       statements db by db.
 
 Grants to a db file's ignored_grantees are left out of both commands.
 
@@ -50,13 +58,22 @@ Library code lives in cnpg_users/; tests: uv run --with pytest --with ruamel.yam
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 from cnpg_users.config import list_db_names, load_db_config, load_ssm_settings
 from cnpg_users.importer import cmd_import
 from cnpg_users.sync import cmd_sync_grants
-from cnpg_users.users import cmd_sync_users
+from cnpg_users.runner import MAX_WORKERS, run_in_order
+from cnpg_users.users import apply_all, plan_users
+
+
+def positive_int(value: str) -> int:
+    n = int(value)
+    if n < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return n
 
 
 def main() -> None:
@@ -71,17 +88,19 @@ def main() -> None:
         "sync-grants",
         help="print SQL to sync live grants with config (does not execute); exit 3 on drift",
     )
-    sync.add_argument("db", nargs="*", help="database names or dbs/ file paths")
-    sync.add_argument("--all", action="store_true", help="every dbs/*.yaml")
+    sync.add_argument("db", nargs="*", help="database names or dbs/ file paths (default: every dbs/*.yaml)")
+    sync.add_argument("--parallel", type=positive_int, default=MAX_WORKERS, metavar="N",
+                      help=f"how many dbs to read at once (default: {MAX_WORKERS})")
 
     users = commands.add_parser(
         "sync-users",
         help="print the values.yaml diff and ALTER ROLE statements that make users match the config; exit 3 on drift",
     )
-    users.add_argument("db", nargs="*", help="database names or dbs/ file paths")
-    users.add_argument("--all", action="store_true", help="every dbs/*.yaml")
+    users.add_argument("db", nargs="*", help="database names or dbs/ file paths (default: every dbs/*.yaml)")
+    users.add_argument("--parallel", type=positive_int, default=MAX_WORKERS, metavar="N",
+                       help=f"how many dbs to read at once (default: {MAX_WORKERS})")
     users.add_argument("--apply", action="store_true",
-                       help="open a PR per values.yaml, wait for the roles, then set passwords")
+                       help="open one PR per repo with the values.yaml changes, wait for the roles, then set passwords")
     users.add_argument("--apply-timeout", type=float, default=180, metavar="SECONDS",
                        help="how long to wait for the PR to be merged and synced (default: 180)")
 
@@ -91,20 +110,23 @@ def main() -> None:
         cmd_import(load_db_config(root, args.db), load_ssm_settings(root), args.write)
         return
 
-    if args.all == bool(args.db):
-        (sync if args.command == "sync-grants" else users).error("give database names or --all")
+    dbs = [load_db_config(root, name) for name in (args.db or list_db_names(root))]
     if args.command == "sync-grants":
-        run = cmd_sync_grants
-    else:
-        ssm = load_ssm_settings(root)
-        run = lambda db: cmd_sync_users(db, ssm, args.apply, args.apply_timeout)  # noqa: E731
-    drift = False
-    for i, name in enumerate(list_db_names(root) if args.all else args.db):
-        if i:
-            print()
-        drift |= run(load_db_config(root, name))
-    sys.exit(3 if drift else 0)
-
+        sys.exit(run_in_order(dbs, cmd_sync_grants, max_workers=args.parallel))
+    ssm = load_ssm_settings(root)
+    sys.exit(run_in_order(
+        dbs,
+        lambda db, out: plan_users(db, ssm, args.apply, out=out),
+        after=(lambda plans: apply_all(plans, ssm, args.apply_timeout)) if args.apply else None,
+        max_workers=args.parallel,
+    ))
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.stdout.flush()
+        print("\ninterrupted", file=sys.stderr, flush=True)
+        # exit now: reads still in flight in worker threads (kubectl exec,
+        # psql) can't be interrupted and would hold up a normal exit
+        os._exit(130)

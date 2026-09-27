@@ -30,11 +30,17 @@ class DbConfig:
     doc: dict                  # round-trip yaml document of dbs/<db>.yaml, edited by import
     online: bool = True
     repo: str | None = None         # GitHub repo holding the ArgoCD values.yaml
-    values_file: str | None = None  # path of values.yaml (CNPG roles: list) in repo
+    values_file: str | None = None  # path of values.yaml (CNPG roles list) in repo
+    values_roles_path: str = "roles"  # dotted path of the roles list in values_file, e.g. cluster.roles
     humans: list[dict] = field(default_factory=list)  # name, superuser, roles
     apps: list[str] = field(default_factory=list)
     grants: dict = field(default_factory=dict)  # database -> grantee -> [statement]
     ignored_grantees: list[str] = field(default_factory=list)
+
+    @property
+    def header(self) -> str:
+        """First line of every per-db report."""
+        return f"{self.name} (cluster {self.cluster} in ns {self.namespace})"
 
 
 def load_ssm_settings(root: Path) -> SsmSettings:
@@ -80,6 +86,7 @@ def load_db_config(root: Path, name: str) -> DbConfig:
         online=online,
         repo=doc.get("repo"),
         values_file=doc.get("values_file"),
+        values_roles_path=str(doc.get("values_roles_path") or "roles"),
         humans=[dict(h) for h in doc.get("humans") or []],
         apps=[str(a) for a in doc.get("apps") or []],
         grants=doc.get("grants") or {},

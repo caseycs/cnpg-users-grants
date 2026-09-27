@@ -10,10 +10,12 @@ from kubernetes import config as k8s_config
 from kubernetes.stream import stream as k8s_stream
 from kubernetes.stream.ws_client import ERROR_CHANNEL, STDERR_CHANNEL, STDOUT_CHANNEL
 
-from . import queries
+from . import eks, queries
 from .config import DbConfig
 from .grants import Catalog, Grant
 from .grants import live_grants as grants_from_acl
+
+eks.install()  # EKS tokens via boto3, not a process per connection
 
 CNPG_GROUP = "postgresql.cnpg.io"
 CNPG_VERSION = "v1"
@@ -22,8 +24,9 @@ CNPG_VERSION = "v1"
 class Cluster:
     def __init__(self, db: DbConfig):
         self.db = db
-        k8s_config.load_kube_config(context=db.context)
-        api_client = k8s_client.ApiClient()
+        # a client of its own: load_kube_config() would set a process-wide
+        # default, racing between threads that read different clusters
+        api_client = k8s_config.new_client_from_config(context=db.context)
         self.custom = k8s_client.CustomObjectsApi(api_client)
         self.core = k8s_client.CoreV1Api(api_client)
         try:

@@ -3,19 +3,19 @@
 from __future__ import annotations
 
 import sys
+from typing import TextIO
 
 from .cluster import Cluster
 from .config import DbConfig
 from .grants import drop_ignored, format_statements, plan
 
 
-def cmd_sync_grants(db: DbConfig) -> bool:
-    """Print the SQL per database; True if live grants differ from the config."""
-    print(f"== {db.name} ==")
-    print(f"cluster {db.cluster} in ns {db.namespace}")
+def cmd_sync_grants(db: DbConfig, out: TextIO = sys.stdout) -> tuple[bool, None]:
+    """Write the SQL per database to out; (True if live grants differ from the config, None)."""
+    print(db.header, file=out)
     if not db.online:
-        print("(offline — skipped)")
-        return False
+        print("(offline — skipped)", file=out)
+        return False, None
 
     cluster = Cluster(db)
     drift = False
@@ -28,9 +28,9 @@ def cmd_sync_grants(db: DbConfig) -> bool:
         except ValueError as exc:
             sys.exit(f"{db.path}: grants.{database}: {exc}")
 
-        print(f"\n  Database: {database}")
+        print(f"  Database: {database}", file=out)
         if not (to_grant or to_revoke):
-            print("    (in sync)")
+            print("    (in sync)", file=out)
             continue
         drift = True
         for title, lines in (
@@ -38,7 +38,7 @@ def cmd_sync_grants(db: DbConfig) -> bool:
             ("To remove", format_statements(to_revoke, catalog, revoke=True)),
         ):
             if lines:
-                print(f"    {title}:")
+                print(f"    {title}:", file=out)
                 for s in lines:
-                    print(f"      {s}")
-    return drift
+                    print(f"      {s}", file=out)
+    return drift, None
