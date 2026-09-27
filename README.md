@@ -15,14 +15,14 @@ flowchart TD
     import["<b>import --write</b><br/>live clusters → dbs/*.yaml"]
   end
   subgraph change["2 · change (you)"]
-    direction LR
+    direction TB
     edit["<b>user grant / revoke / offboard</b><br/>or edit grants by hand"] --> commit["review and commit<br/>dbs/*.yaml"]
   end
   subgraph check["3 · check (you or CI)"]
     sync["<b>sync</b>: what differs, per db<br/>exit 3 on drift"]
   end
   subgraph apply["4 · sync --apply"]
-    direction LR
+    direction TB
     subgraph users["users"]
       direction TB
       differs{"roles list in<br/>values.yaml differs?"}
