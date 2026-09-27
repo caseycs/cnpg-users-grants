@@ -7,19 +7,44 @@ For many [CloudNativePG](https://cloudnative-pg.io) clusters deployed by GitOps 
 
 Nothing changes a database or repo unless you pass `--apply`.
 
-## Quick start
+## Workflow
 
 ```mermaid
-flowchart LR
-  import["import --write<br/>live clusters → dbs/*.yaml"] --> edit["user grant / revoke / offboard<br/>edit dbs/*.yaml"]
-  edit --> review["review and commit<br/>the db files"]
-  review --> sync["sync<br/>what differs, per db"]
-  sync -- "--apply" --> pr["one PR per GitOps repo"]
-  pr --> merge(["a person merges"])
-  merge --> rollout["GitOps syncs,<br/>CNPG creates / drops roles"]
-  rollout --> passwords["passwords set<br/>from the store"]
-  passwords --> sql["confirm, then<br/>GRANT / REVOKE run"]
+flowchart TD
+  subgraph once["1 · once"]
+    import["<b>import --write</b><br/>live clusters → dbs/*.yaml"]
+  end
+  subgraph change["2 · change (you)"]
+    direction LR
+    edit["<b>user grant / revoke / offboard</b><br/>or edit grants by hand"] --> commit["review and commit<br/>dbs/*.yaml"]
+  end
+  subgraph check["3 · check (you or CI)"]
+    sync["<b>sync</b>: what differs, per db<br/>exit 3 on drift"]
+  end
+  subgraph apply["4 · sync --apply"]
+    direction LR
+    subgraph users["users"]
+      direction TB
+      differs{"roles list in<br/>values.yaml differs?"}
+      differs -- yes --> pr["opens a PR per GitOps repo"]
+      pr --> merge(["a person merges it"])
+      merge --> rollout["GitOps syncs,<br/>CNPG creates / drops roles"]
+      rollout --> pw["sets passwords<br/>from the store"]
+      differs -- no --> pw
+    end
+    subgraph grants["grants"]
+      direction TB
+      confirm(["you confirm"]) --> sql["runs GRANT / REVOKE"]
+    end
+    users --> grants
+  end
+  once --> change --> check --> apply
+  apply -. "later drift, e.g. a migration" .-> check
 ```
+
+`sync --apply` only opens a PR when a cluster's roles list actually has to change; otherwise it goes straight to passwords and grants.
+
+## Quick start
 
 Requires [uv](https://docs.astral.sh/uv/), a kubeconfig with access to the clusters, `gh` logged in (for `sync-users`) and access to your password store (AWS, GCP or sops keys).
 
