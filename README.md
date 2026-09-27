@@ -20,7 +20,7 @@ Several CNPG clusters, each deployed by GitOps (ArgoCD, FluxCD, …) from a valu
 
 ## What it does
 
-- **One place for human users:** `user grant` / `revoke` / `offboard` edit the db files; `sync-users --apply` turns that into one PR per GitOps repo and waits until the roles are created or dropped.
+- **One place for human users:** `user grant` / `revoke` / `offboard` edit the db files; `sync-users --apply` turns that into one PR per GitOps repo, waits for a person to merge it and GitOps to roll it out, then sets passwords.
 - **One password per person:** each human's password lives once in a secret store (AWS SSM, GCP Secret Manager or a sops-encrypted file), and is set on every cluster they're in, as a SCRAM verifier, never plaintext.
 - **Grants as code:** a compact snapshot of each database's grants, and the exact `GRANT`/`REVOKE` SQL that makes a cluster match it. It exits non-zero on drift, so it works in CI.
 
@@ -70,7 +70,7 @@ uvx --from git+https://github.com/caseycs/cnpg-users-grants@v0.2.0 cnpg-users sy
 | `sync-grants [<db>…]` | Print the SQL that makes live grants match the file. |
 | `sync-grants --apply [--yes]` | Run it: asks first (`--yes` skips, e.g. in CI), one transaction per database, then re-checks. |
 | `sync-users [<db>…]` | Print the values.yaml change and password statements for humans. |
-| `sync-users --apply` | Open one PR per repo, wait for it to be merged and synced, then set passwords. |
+| `sync-users --apply` | Open one PR per GitOps repo, wait for a person to merge it and GitOps to sync it, then set passwords. |
 | `user grant <name> <db>… [--role R]… [--superuser]` | Add or update a human in these db files (default role `pg_read_all_data`). |
 | `user revoke <name> <db>…` | Mark the human `ensure: absent` there and drop their `grants:`. |
 | `user offboard <name>` | `revoke` in every db file they're in. |
@@ -93,6 +93,8 @@ cnpg-users sync-users                                            #    shows what
 cnpg-users sync-users --apply                                    # 2. PR marks her role ensure: absent in values.yaml
 cnpg-users sync-grants --apply                                   #    REVOKE the grants she still holds
 ```
+
+**Role changes go through GitOps, never straight to the cluster.** `sync-users --apply` doesn't create or drop roles itself: it commits the values.yaml changes to a branch in each GitOps repo and opens one PR per repo, labeled `cnpg-users-grants` (an open PR with that label is updated instead of opening another). Someone reviews and merges it; ArgoCD or Flux syncs the new roles list, and CNPG creates or drops the roles. The tool waits meanwhile, checking the clusters every 10 seconds for up to `--apply-timeout` (default 180 s), and sets passwords only once the roles exist. If nobody merges in time, it stops without setting them; run it again after the merge.
 
 CNPG can't drop a role that still owns objects or holds privileges. `sync-users` lists those per database with the `REASSIGN OWNED … DROP OWNED …` to run first. Roles are cluster-wide: granting a human in a db file gives them access on every database of that cluster. Passwords are generated in the store on first `--apply` if missing, and aren't deleted on offboarding.
 
