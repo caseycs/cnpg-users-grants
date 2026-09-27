@@ -52,6 +52,14 @@ uvx --from git+https://github.com/caseycs/cnpg-users-grants cnpg-users sync-gran
 
 `uvx` fetches and caches the tool on first use; add `@<tag or commit>` to the URL to pin a version, or `uv tool install git+https://github.com/caseycs/cnpg-users-grants` to keep `cnpg-users` on your PATH.
 
+To pin a release rather than track `main`:
+
+<!-- x-release-please-start-version -->
+```sh
+uvx --from git+https://github.com/caseycs/cnpg-users-grants@v0.1.0 cnpg-users sync-grants
+```
+<!-- x-release-please-end -->
+
 ## Commands
 
 | Command | What it does |
@@ -156,6 +164,8 @@ A role's privileges on objects it owns are implicit and never listed. `import` c
 - EKS logins are signed in-process with boto3; other kubeconfig auth works as usual.
 
 ## Development
+
+Releases are cut by [release-please](.github/workflows/release.yml): merging the release PR it maintains tags that commit, publishes the GitHub Release, and attaches the sdist and wheel. Version bumps come from [conventional commits](https://www.conventionalcommits.org): `feat:` and `fix:` subjects move the version and appear in the changelog.
 
 Needs [Task](https://taskfile.dev); integration tests also need Docker and [kind](https://kind.sigs.k8s.io).
 
