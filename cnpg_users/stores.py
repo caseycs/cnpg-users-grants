@@ -6,7 +6,7 @@
       gcp_project, gcp_secret_prefix           (Application Default Credentials;
                                                needs the [gcp] extra)
     type: sops                 one encrypted YAML/JSON file mapping role: password
-      sops_file                               (path relative to the config
+      sops_file                               (path relative to the current
                                                directory; any sops key type)
 
 Every store lists role names (import: who is a human), reads passwords

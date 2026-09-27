@@ -138,7 +138,7 @@ gcp_secret_prefix: cnpg-user-      # default
 
 ```yaml
 type: sops                         # one encrypted file: {role: password}; any sops key (age, KMS, PGP)
-sops_file: passwords.sops.yaml     # relative to this directory
+sops_file: passwords.sops.yaml     # relative to the current directory
 ```
 
 GCP needs the `gcp` extra: `uvx --from 'cnpg-users-grants[gcp] @ git+https://github.com/caseycs/cnpg-users-grants' cnpg-users …`. The sops store needs `sops` on the PATH; new passwords are written with `sops set --value-stdin`, so they never appear in process listings.
