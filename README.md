@@ -13,12 +13,11 @@ CNPG manages roles declaratively ([managed roles](https://cloudnative-pg.io/docu
 
 Humans have a second problem. Every cluster keeps its roles list in its own values file, often in its own repo. Giving someone access, or taking it away, means editing several files in several repos, and the same person ends up with a different password on every cluster.
 
-## Why not…
+## Approach
 
-- **External Secrets Operator + `passwordSecret`.** Point every cluster's managed role at the same store entry and you get one password per person, but every cluster then keeps that person's plaintext password in a Kubernetes Secret. Anyone who can read Secrets in any one of those namespaces can use it on every cluster. Here the plaintext stays in the store; a cluster only receives the SCRAM verifier, which is what Postgres keeps anyway.
-- **[ldap2pg](https://github.com/dalibo/ldap2pg).** Mature and declarative, but it creates, alters and drops roles itself, over SQL. On CNPG that competes with the operator: the cluster's managed roles, declared in your GitOps repo, are the source of truth for roles, and CNPG reconciles them. This tool never creates or drops a role directly. Role changes go into that CNPG declaration as a PR, and the tool only sets passwords and grants, which CNPG leaves alone.
-- **Terraform `postgresql` provider / Crossplane provider-sql.** Both need a network connection and credentials for every database, plus state to keep. Here the YAML files are the state, and access goes through kubeconfig.
-- **SSO / OAuth (PG 18), Teleport, Vault dynamic credentials.** Better for human access if you have them. This tool is for teams that give people password logins; its grants half is useful either way.
+- **One place for every cluster's role declarations.** Each CNPG cluster has one file in `clusters/`, and `user grant` / `revoke` / `offboard` edit them across all clusters at once. The tool turns those edits into one PR per GitOps repo.
+- **The CNPG operator does the work.** A cluster's [managed roles](https://cloudnative-pg.io/documentation/current/declarative_role_management/) in its values file stay the source of truth, and CNPG creates and drops roles from them. The tool never does that over SQL. It only sets passwords and grants, which CNPG doesn't manage.
+- **Passwords stored centrally.** Each person's password lives once in your secret store. A cluster only receives the SCRAM verifier, which Postgres keeps anyway, so no cluster holds a plaintext copy in a Kubernetes Secret.
 
 **Scope.** The users half assumes a GitHub repo (via `gh`) holding each cluster's Helm values file with its CNPG roles list. `sync-grants` needs only kubeconfig access. `import` also reads the password store, to tell humans from apps.
 
