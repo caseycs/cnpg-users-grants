@@ -1,5 +1,5 @@
 """sync-users: what makes a cluster's users match humans:/apps: in the cluster file
-- the values.yaml (CNPG roles: list) change in its GitHub repo, and
+- the values.yaml (CNPG roles: list) change in its GitHub or GitLab repo, and
 - ALTER ROLE statements for humans whose password differs from the store.
 With --apply, after every cluster was read: one PR per repo with all its
 values.yaml changes, wait for the roles to appear/go once merged and synced,
@@ -16,12 +16,21 @@ from typing import Callable, TextIO
 from .cluster import Cluster
 from .config import DbConfig
 from .diff import print_diff
-from .github import FileChange, GitHubError, RepoFile, get_file, open_pr
+from .repos import FileChange, PullRequest, RepoError, RepoFile, provider
 from .passwords import generate_password, password_matches, scram_verifier
 from .stores import PasswordStore
 from .values import RolesChange, sync_roles
 
 POLL_SECONDS = 10
+
+
+def get_file(db: DbConfig, path: str) -> RepoFile:
+    return provider(db.repo_provider, db.gitlab_host).get_file(db.repo, path)
+
+
+def open_pr(db: DbConfig, changes: list[FileChange], branch: str, title: str, body: str) -> PullRequest:
+    """One PR (GitHub) or MR (GitLab) in db's repo."""
+    return provider(db.repo_provider, db.gitlab_host).open_pr(db.repo, changes, branch, title, body)
 
 
 def password_plan(
@@ -142,8 +151,8 @@ def users_body(db: DbConfig, store: PasswordStore, apply: bool = False) -> tuple
     """The users part of a report ('' if in sync), whether anything differs,
     and the plan for apply_all. db must be online with repo/values_file."""
     try:
-        current = get_file(db.repo, db.values_file)
-    except GitHubError as exc:
+        current = get_file(db, db.values_file)
+    except RepoError as exc:
         sys.exit(f"error fetching {db.repo}:{db.values_file}: {exc}")
     try:
         change = sync_roles(current.text, db.humans, db.apps, db.values_roles_path)
@@ -179,21 +188,22 @@ def apply_all(plans: list[UsersPlan], store: PasswordStore, timeout: float = 180
     values.yaml changes, one wait for every affected cluster, then passwords
     db by db. True if anything still differs."""
     pending = [p for p in plans if p.values_pending]
-    by_repo: dict[str, list[UsersPlan]] = {}
+    by_repo: dict[tuple, list[UsersPlan]] = {}
     for p in pending:
-        by_repo.setdefault(p.db.repo, []).append(p)
+        by_repo.setdefault((p.db.repo_provider, p.db.gitlab_host, p.db.repo), []).append(p)
 
-    for repo, repo_plans in by_repo.items():
+    for (kind, _, repo), repo_plans in by_repo.items():
+        pr_word = "MR" if kind == "gitlab" else "PR"
         files = ", ".join(p.db.values_file for p in repo_plans)
-        print(f"\nCreating PR in {repo} ({len(repo_plans)} values file(s): {files})...", flush=True)
+        print(f"\nCreating {pr_word} in {repo} ({len(repo_plans)} values file(s): {files})...", flush=True)
         changes = [FileChange(p.db.values_file, p.current.sha, p.change.text) for p in repo_plans]
         title = "cnpg users: sync " + ", ".join(p.db.name for p in repo_plans)
         try:
-            pr = open_pr(repo, changes, PR_BRANCH, title, pr_body(repo_plans))
-        except GitHubError as exc:
-            sys.exit(f"error opening PR in {repo}: {exc}")
+            pr = open_pr(repo_plans[0].db, changes, PR_BRANCH, title, pr_body(repo_plans))
+        except RepoError as exc:
+            sys.exit(f"error opening {pr_word} in {repo}: {exc}")
         note = {"opened": " (opened)", "updated": " (existing, rewritten)"}[pr.action]
-        print(f"  PR{note}: {pr.url}", flush=True)
+        print(f"  {pr_word}{note}: {pr.url}", flush=True)
 
     still_pending: set[str] = set()
     if pending:

@@ -6,13 +6,12 @@ import base64
 import json
 import re
 import subprocess
-from dataclasses import dataclass
+
+from .repos import PR_LABEL, PR_LABEL_COLOR, FileChange, PullRequest, RepoError, RepoFile  # noqa: F401
 
 
-class GitHubError(Exception):
-    def __init__(self, message: str, status: int | None = None):
-        super().__init__(message)
-        self.status = status
+class GitHubError(RepoError):
+    pass
 
 
 def api(method: str, endpoint: str, payload: dict | None = None):
@@ -28,32 +27,9 @@ def api(method: str, endpoint: str, payload: dict | None = None):
     return json.loads(result.stdout) if result.stdout.strip() else None
 
 
-@dataclass
-class RepoFile:
-    text: str
-    sha: str  # blob sha, to detect the file changing before the PR is opened
-
-
 def get_file(repo: str, path: str, ref: str | None = None) -> RepoFile:
     data = api("GET", f"repos/{repo}/contents/{path}" + (f"?ref={ref}" if ref else ""))
     return RepoFile(base64.b64decode(data["content"]).decode(), data["sha"])
-
-
-@dataclass
-class FileChange:
-    path: str
-    base_sha: str  # blob the change was computed from
-    text: str      # new content
-
-
-PR_LABEL = "cnpg-users-grants"
-PR_LABEL_COLOR = "1d76db"
-
-
-@dataclass
-class PullRequest:
-    url: str
-    action: str  # "opened", or "updated" (an open PR with our label, rewritten)
 
 
 def labeled_open_prs(repo: str, label: str = PR_LABEL) -> list[dict]:
