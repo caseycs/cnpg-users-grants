@@ -71,13 +71,20 @@ def test_sync_roles_unchanged():
     assert change.text == VALUES and change.summary == []
 
 
-def test_sync_roles_marks_removed_human_absent_and_keeps_apps():
-    humans = [{"name": "alice", "superuser": False, "roles": ["pg_read_all_data"]}]
-    # webapp_owner has no passwordSecret: only apps: protects it
-    change = sync_roles(VALUES, humans, ["webapp_owner"])
-    assert change.absent == ["bob"]
+def test_sync_roles_absent_human_is_dropped():
+    humans = [{"name": "alice", "superuser": False, "roles": ["pg_read_all_data"]}, {"name": "bob", "ensure": "absent"}]
+    change = sync_roles(VALUES, humans, ["webapp", "webapp_owner"])
+    assert change.absent == ["bob"] and change.unlisted == []
     assert change.text == VALUES.replace(
         "  - name: bob\n    ensure: present\n", "  - name: bob\n    ensure: absent\n")
+
+
+def test_sync_roles_unlisted_roles_are_only_reported():
+    humans = [{"name": "alice", "superuser": False, "roles": ["pg_read_all_data"]}]
+    # bob isn't a human any more but wasn't marked absent; webapp_owner isn't in apps
+    change = sync_roles(VALUES, humans, ["webapp"])
+    assert change.text == VALUES
+    assert change.unlisted == ["webapp_owner", "bob"] and change.absent == []
 
 
 def test_sync_roles_updates_and_appends():
@@ -152,7 +159,7 @@ def test_sync_roles_nested_path_unchanged_and_absent():
     text = nested(VALUES)
     humans = [{"name": "alice", "superuser": False, "roles": ["pg_read_all_data"]}, {"name": "bob", "superuser": True}]
     assert sync_roles(text, humans, ["webapp", "webapp_owner"], "cluster.roles").text == text
-    change = sync_roles(text, humans[:1], ["webapp", "webapp_owner"], "cluster.roles")
+    change = sync_roles(text, [humans[0], {"name": "bob", "ensure": "absent"}], ["webapp", "webapp_owner"], "cluster.roles")
     assert change.absent == ["bob"]
     assert change.text == text.replace("    - name: bob\n      ensure: present\n", "    - name: bob\n      ensure: absent\n")
 
@@ -171,3 +178,14 @@ def test_sync_roles_nested_path_appends_with_blank_lines():
 def test_sync_roles_missing_path():
     with pytest.raises(ValueError, match="no list at cluster.roles"):
         sync_roles(VALUES, [], [], "cluster.roles")
+
+
+def test_sync_roles_bare_app_names_untouched():
+    humans = [{"name": "alice", "superuser": False, "roles": ["pg_read_all_data"]}, {"name": "bob", "superuser": True}]
+    assert sync_roles(VALUES, humans, ["webapp", "webapp_owner"]).text == VALUES
+
+
+def test_sync_roles_never_touches_apps():
+    humans = [{"name": "alice", "superuser": False, "roles": ["pg_read_all_data"]}, {"name": "bob", "superuser": True}]
+    # listing an app that has no values entry adds nothing; its entries stay as they are
+    assert sync_roles(VALUES, humans, ["webapp", "webapp_owner", "not_in_values"]).text == VALUES

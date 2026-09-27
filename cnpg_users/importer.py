@@ -20,6 +20,7 @@ SYSTEM_ROLES = {"postgres", "streaming_replica", "cnpg_pooler_pgbouncer", "app"}
 class Roles:
     humans: list[dict] = field(default_factory=list)
     apps: list[str] = field(default_factory=list)
+    app_entries: dict[str, dict] = field(default_factory=dict)  # name -> {name, superuser, roles}
     app_reasons: dict[str, str] = field(default_factory=dict)
     skipped: list[str] = field(default_factory=list)
 
@@ -51,8 +52,10 @@ def classify_roles(
 
     out = Roles()
 
-    def app(name: str, reason: str) -> None:
+    def app(role: dict, reason: str) -> None:
+        name = role["name"]
         out.apps.append(name)
+        out.app_entries[name] = human_entry(role)
         out.app_reasons[name] = reason
         say(f"  {name}: app ({reason})")
 
@@ -62,20 +65,54 @@ def classify_roles(
         if name.startswith(("pg_", "cnpg_")) or name in SYSTEM_ROLES or name in reserved:
             out.skipped.append(f"{name} (system)")
         elif name in crd_roles:
-            app(name, "DatabaseRole CR, managed elsewhere")
+            app(role, "DatabaseRole CR, managed elsewhere")
         elif name in secret_synced or entry.get("passwordSecret") or name == bootstrap_owner:
-            app(name, "password via k8s secret")
+            app(role, "password via k8s secret")
         elif entry.get("ensure") == "absent":
             out.skipped.append(f"{name} (ensure: absent)")
         elif name in ssm_users:
             out.humans.append(human_entry(role))
             say(f"  {name}: human (password in SSM)")
         else:
-            app(name, "no password in SSM")
+            app(role, "no password in SSM")
 
     out.humans.sort(key=lambda h: h["name"])
     out.apps.sort()
     return out
+
+
+def merge_humans(
+    config: list[dict], live: list[dict], live_roles: set[str], prune: bool = False
+) -> tuple[list[dict], list[str]]:
+    """humans: for the db file. With prune, exactly the live humans. Otherwise
+    edits not applied yet survive: a human in the file but not live yet is
+    kept (pending create), config wins over live for superuser/roles, and an
+    ensure: absent entry stays until its role is gone. Live humans missing
+    from the file are added. Returns (humans, notes)."""
+    if prune:
+        return sorted(live, key=lambda h: h["name"]), []
+    live_by_name = {h["name"]: h for h in live}
+    out, notes, seen = [], [], set()
+    for c in config:
+        name = c["name"]
+        seen.add(name)
+        if c.get("ensure") == "absent":
+            if name in live_roles:
+                out.append(dict(c))
+                notes.append(f"{name}: ensure: absent, role still exists (pending drop)")
+            else:
+                notes.append(f"{name}: dropped, removed from humans")
+            continue
+        out.append(dict(c))
+        if name not in live_by_name:
+            notes.append(f"{name}: not created yet (pending)")
+        elif {k: v for k, v in live_by_name[name].items()} != {k: v for k, v in c.items()}:
+            notes.append(f"{name}: differs from live {live_by_name[name]} (pending; --prune takes live)")
+    for h in live:
+        if h["name"] not in seen:
+            out.append(h)
+            notes.append(f"{h['name']}: found live, added")
+    return sorted(out, key=lambda h: h["name"]), notes
 
 
 def build_grants_config(
@@ -94,7 +131,7 @@ def build_grants_config(
     return config
 
 
-def update_config(db: DbConfig, humans: list[dict], apps: list[str], grants: dict) -> tuple[str, str]:
+def update_config(db: DbConfig, humans: list[dict], apps: list, grants: dict) -> tuple[str, str]:
     """Apply import results to db.doc; returns (before, after) yaml text."""
     yaml = make_write_yaml()
 
@@ -125,7 +162,7 @@ def update_config(db: DbConfig, humans: list[dict], apps: list[str], grants: dic
     return before, "".join(lines)
 
 
-def cmd_import(db: DbConfig, ssm: SsmSettings, write: bool) -> None:
+def cmd_import(db: DbConfig, ssm: SsmSettings, write: bool, prune: bool = False) -> None:
     if not db.online:
         print(f"{db.header}: offline — skipped")
         return
@@ -149,13 +186,21 @@ def cmd_import(db: DbConfig, ssm: SsmSettings, write: bool) -> None:
 
     roles = classify_roles(info["roles"], cluster.cr, crd_roles, ssm_users(ssm))
 
+    humans, human_notes = merge_humans(db.humans, roles.humans, {r["name"] for r in info["roles"]}, prune)
     print("\nhumans:")
-    for h in roles.humans:
-        flags = ["superuser"] if h["superuser"] else []
-        print(f"  {h['name']}  {' '.join(flags + h.get('roles', [])) or '-'}")
+    for h in humans:
+        if h.get("ensure") == "absent":
+            print(f"  {h['name']}  ensure: absent")
+            continue
+        flags = ["superuser"] if h.get("superuser") else []
+        print(f"  {h['name']}  {' '.join(flags + list(h.get('roles') or [])) or '-'}")
+    for n in human_notes:
+        print(f"  note: {n}")
     print("apps:")
     for a in roles.apps:
-        print(f"  {a}  ({roles.app_reasons[a]})")
+        e = roles.app_entries[a]
+        flags = ["superuser"] if e.get("superuser") else []
+        print(f"  {a}  {' '.join(flags + list(e.get('roles') or [])) or '-'}  ({roles.app_reasons[a]})")
     if not roles.apps:
         print("  (none)")
     print("skipped:")
@@ -188,7 +233,8 @@ def cmd_import(db: DbConfig, ssm: SsmSettings, write: bool) -> None:
             for s in format_statements(to_revoke, catalogs[database], revoke=True)[:10]:
                 print(f"      {s}")
 
-    before, after = update_config(db, roles.humans, roles.apps, grants)
+    apps = [a for a in roles.apps if a not in {h["name"] for h in humans}]
+    before, after = update_config(db, humans, apps, grants)
     print("\nconfig diff:")
     print_diff(before, after, db.path.name, indent="  " if before == after else "")
 

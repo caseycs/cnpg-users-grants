@@ -126,9 +126,15 @@ def live_grants(acl: dict) -> set[Grant]:
     return out
 
 
+IGNORABLE_KINDS = {"table", "sequence"}
+
+
 def drop_ignored(grants: Iterable[Grant], ignored_grantees: Iterable[str]) -> set[Grant]:
+    """Leave out table and sequence grants to ignored grantees. Their schema
+    and database grants (GRANT CREATE/USAGE ON SCHEMA, CONNECT ON DATABASE,
+    ...) and default privileges are still managed."""
     ignored = set(ignored_grantees)
-    return {g for g in grants if g.grantee not in ignored}
+    return {g for g in grants if g.kind not in IGNORABLE_KINDS or g.grantee not in ignored}
 
 
 # --- config side -------------------------------------------------------------
@@ -296,8 +302,13 @@ def render(st: Stmt, catalog: Catalog, *, revoke: bool = False) -> str:
     return f"{verb} {privs} ON {target} {prep} {grantee};"
 
 
-def plan(config_stmts: Iterable[str], live: set[Grant], catalog: Catalog) -> tuple[set[Grant], set[Grant]]:
+def plan(
+    config_stmts: Iterable[str], live: set[Grant], catalog: Catalog, ignored_grantees: Iterable[str] = ()
+) -> tuple[set[Grant], set[Grant]]:
     """(to_grant, to_revoke) that make `live` match the config statements.
-    `live` should already have ignored grantees dropped."""
-    desired = expand((parse_statement(s) for s in config_stmts), catalog)
+    Grants to ignored_grantees are left out on both sides, so statements for
+    them still in the file (not re-imported yet) are neither granted nor revoked."""
+    ignored = set(ignored_grantees)
+    desired = drop_ignored(expand((parse_statement(s) for s in config_stmts), catalog), ignored)
+    live = drop_ignored(live, ignored)
     return desired - live, live - desired

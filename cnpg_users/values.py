@@ -53,6 +53,7 @@ class RolesChange:
     added: list[str] = field(default_factory=list)     # humans appended
     updated: list[str] = field(default_factory=list)   # humans whose entry changed
     absent: list[str] = field(default_factory=list)    # roles newly set ensure: absent
+    unlisted: list[str] = field(default_factory=list)  # roles in values.yaml that aren't in the db file
 
     @property
     def summary(self) -> list[str]:
@@ -60,14 +61,31 @@ class RolesChange:
                 + [f"mark absent {n}" for n in self.absent])
 
 
+def _update_entry(entry, want: dict, keys: tuple[str, ...]) -> bool:
+    """Set keys and inRoles of a roles-list entry to want; True if it changed."""
+    changes = {k: want[k] for k in keys if entry.get(k) != want[k]}
+    drop_roles = "inRoles" in entry and "inRoles" not in want
+    if "inRoles" in want and list(entry.get("inRoles") or []) != want["inRoles"]:
+        changes["inRoles"] = want["inRoles"]
+    if not (changes or drop_roles):
+        return False
+    tail = _pop_tail(entry)  # re-attached to whatever ends the entry now
+    entry.update(changes)
+    if drop_roles:
+        del entry["inRoles"]
+    if tail is not None:
+        _put_tail(entry, tail)
+    return True
+
+
 def sync_roles(text: str, humans: list[dict], apps: list[str], roles_path: str = "roles") -> RolesChange:
     """values.yaml text with its CNPG roles list (at dotted `roles_path`,
-    e.g. "roles" or "cluster.roles") matching the db file:
-    - every human present, with login/superuser/inRoles as in the db file
+    e.g. "roles" or "cluster.roles") matching the db file's humans:
+    - every present human with login/superuser/inRoles as in the db file
       (other keys and comments kept; missing humans appended at the end)
-    - every other role that isn't an app and has no passwordSecret gets
-      ensure: absent, so CNPG drops it
-    - apps, passwordSecret roles and already-absent roles are left alone."""
+    - every human marked ensure: absent gets ensure: absent, so CNPG drops it
+    - apps and roles listed nowhere in the db file are never changed; the
+      latter are reported in change.unlisted."""
     yaml = make_write_yaml()
     doc = yaml.load(text)
     keys = roles_path.split(".")
@@ -82,13 +100,18 @@ def sync_roles(text: str, humans: list[dict], apps: list[str], roles_path: str =
     field = " " * (key_indent + 4)
 
     by_name = {r.get("name"): r for r in roles}
-    wanted = {h["name"]: human_role(h) for h in humans}
-    keep = set(apps) | set(wanted)
+    wanted = {h["name"]: human_role(h) for h in humans if h.get("ensure") != "absent"}
+    absent = {h["name"] for h in humans if h.get("ensure") == "absent"}
     change = RolesChange(text)
     for entry in roles:
-        if entry.get("name") not in keep and "passwordSecret" not in entry and entry.get("ensure") != "absent":
+        name = entry.get("name")
+        if entry.get("ensure") == "absent":
+            continue
+        if name in absent:
             entry["ensure"] = "absent"
-            change.absent.append(entry.get("name"))
+            change.absent.append(name)
+        elif name not in wanted and name not in apps:
+            change.unlisted.append(name)
 
     added = change.added
     for name, want in wanted.items():
@@ -97,19 +120,8 @@ def sync_roles(text: str, humans: list[dict], apps: list[str], roles_path: str =
             roles.append(want)
             added.append(name)
             continue
-        changes = {k: want[k] for k in ("ensure", "login", "superuser") if entry.get(k) != want[k]}
-        drop_roles = "inRoles" in entry and "inRoles" not in want
-        if "inRoles" in want and list(entry.get("inRoles") or []) != want["inRoles"]:
-            changes["inRoles"] = want["inRoles"]
-        if not (changes or drop_roles):
-            continue
-        change.updated.append(name)
-        tail = _pop_tail(entry)  # re-attached to whatever ends the entry now
-        entry.update(changes)
-        if drop_roles:
-            del entry["inRoles"]
-        if tail is not None:
-            _put_tail(entry, tail)
+        if _update_entry(entry, want, ("ensure", "login", "superuser")):
+            change.updated.append(name)
 
     buf = io.StringIO()
     yaml.dump(doc, buf)

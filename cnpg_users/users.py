@@ -90,6 +90,21 @@ def pr_body(plans: list[UsersPlan]) -> str:
     return "\n".join(lines)
 
 
+def drop_blocker_lines(rows: list[dict]) -> list[str]:
+    """Report + SQL to clear what blocks DROP ROLE (CNPG can't drop a role that
+    still owns objects or holds privileges)."""
+    if not rows:
+        return []
+    lines = ["  before these roles can be dropped, run (as postgres, in each database):"]
+    for r in rows:
+        role = '"' + r["role"].replace('"', '""') + '"'
+        owner = '"' + r["db_owner"].replace('"', '""') + '"'
+        where = r["database"] or "(shared objects, any database)"
+        lines.append(f"    {where}: {r['role']} owns {r['owned']}, holds {r['privileges']} privilege(s)")
+        lines.append(f"      REASSIGN OWNED BY {role} TO {owner}; DROP OWNED BY {role};")
+    return lines
+
+
 @dataclass
 class UsersPlan:
     db: DbConfig
@@ -123,11 +138,16 @@ def plan_users(db: DbConfig, ssm: SsmSettings, apply: bool = False,
         change = sync_roles(current.text, db.humans, db.apps, db.values_roles_path)
     except ValueError as exc:
         sys.exit(f"{db.repo}:{db.values_file}: {exc}")
-    p = UsersPlan(db, Cluster(db), current, change, [h["name"] for h in db.humans])
+    p = UsersPlan(db, Cluster(db), current, change, [h["name"] for h in db.present_humans])
     body = io.StringIO()
     if p.values_pending:
         print(f"  values.yaml ({db.repo}):", file=body)
         print_diff(current.text, change.text, db.values_file, indent="    ", out=body)
+    if change.unlisted:
+        print(f"  warning: in values.yaml but not in humans:/apps: {', '.join(change.unlisted)} (left as is)", file=body)
+    blocked = drop_blocker_lines(p.cluster.drop_blockers(sorted(set(change.absent) | set(db.absent_humans))))
+    for line in blocked:
+        print(line, file=body)
     statements: list[str] = []
     if not apply:  # with apply, passwords are checked after the roles are in place
         statements, status = password_plan(p.names, ssm_passwords(ssm, p.names), p.cluster.password_verifiers(p.names))
@@ -145,7 +165,7 @@ def plan_users(db: DbConfig, ssm: SsmSettings, apply: bool = False,
     else:
         print(db.header, file=out)
         print(body.getvalue(), end="", file=out)
-    return p.values_pending or bool(statements), p
+    return p.values_pending or bool(statements) or bool(blocked), p
 
 
 def apply_all(plans: list[UsersPlan], ssm: SsmSettings, timeout: float = 180) -> bool:

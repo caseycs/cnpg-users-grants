@@ -1,19 +1,26 @@
 # cnpg-users-grants
 
-Keep PostgreSQL users and grants on [CloudNativePG](https://cloudnative-pg.io) clusters in plain YAML, and see what drifted.
+Manage human PostgreSQL users across many [CloudNativePG](https://cloudnative-pg.io) clusters from one place, with one password per person everywhere.
+
+## Scope
+
+Several CNPG clusters, each deployed by GitOps (ArgoCD, FluxCD, …) from a values file in a GitHub repo that holds the cluster's [managed roles](https://cloudnative-pg.io/documentation/current/declarative_role_management/) list.
+
+User management is for **human users only**: people who log in with their own password. Application roles are listed by name for reference and never changed: their values-file entries, passwords (k8s secrets) and memberships stay with whoever runs the app. A role that is neither a listed human nor an app is reported as a warning, never touched.
+
+Grants are the exception: `sync-grants` covers every role's table, schema and database grants, apps included, so drift in what an app can access shows up too.
 
 ## The problem
 
-With a few CNPG clusters, roles and grants spread across ArgoCD values files, one-off SQL scripts and people's memory. After a while nobody can say who has access where, why a worker suddenly gets `permission denied`, or which grants a SQL file from last year actually left behind.
+Every cluster has its own roles list in its own repo. Giving someone access, or taking it away, means editing several files in several repos, and each cluster ends up with a different password for the same person. Grants live in one-off SQL scripts, so after a while nobody can say who has access where, or why a worker suddenly gets `permission denied`.
 
-## What it's for
+## What it does
 
-- **Snapshot** the users and grants of a live cluster into a reviewable YAML file.
-- **Detect drift**: print the exact `GRANT`/`REVOKE` SQL that makes a cluster match its file. It exits non-zero on drift, so it works in CI.
-- **Offboard people**: remove someone from the file, get a PR that marks their CNPG role `ensure: absent`.
-- **Keep passwords in sync**: set each human's password from AWS SSM, without the plaintext appearing anywhere.
+- **One place for human users**: every cluster's humans are in one directory of YAML files. `user grant` / `revoke` / `offboard` edit them; `sync-users --apply` turns that into one PR per GitOps repo and waits until the roles are created or dropped.
+- **One password per person**: each human's password lives in AWS SSM once, and is set on every cluster they're in, as a SCRAM verifier, never plaintext.
+- **Grants as code**: a snapshot of each database's grants, and the exact `GRANT`/`REVOKE` SQL that makes a cluster match it. It exits non-zero on drift, so it works in CI.
 
-Nothing runs on a database by itself: grant SQL is printed for you to review and run. Only `sync-users --apply` changes things (a PR, then passwords).
+Nothing changes a database or repo unless you ask: without `--apply` both `sync-*` commands only print what they would do. `sync-grants --apply` runs the SQL after a confirmation; `sync-users --apply` opens PRs and sets passwords.
 
 ## Quick start
 
@@ -49,12 +56,35 @@ uvx --from git+https://github.com/caseycs/cnpg-users-grants cnpg-users sync-gran
 
 | Command | What it does |
 |---|---|
-| `import <db> [--write]` | Read roles and grants from the live cluster, show the diff against `dbs/<db>.yaml`; `--write` saves it. |
+| `import <db> [--write] [--prune]` | Read roles and grants from the live cluster, show the diff against `dbs/<db>.yaml`; `--write` saves it. |
 | `sync-grants [<db>…]` | Print the SQL that makes live grants match the file. |
+| `sync-grants --apply [--yes]` | Run it: asks first (`--yes` skips, e.g. in CI), one transaction per database, then re-checks. |
 | `sync-users [<db>…]` | Print the values.yaml change and password statements for humans. |
 | `sync-users --apply` | Open one PR per repo, wait for it to be merged and synced, then set passwords. |
+| `user grant <name> <db>… [--role R]… [--superuser]` | Add or update a human in these db files (default role `pg_read_all_data`). |
+| `user revoke <name> <db>…` | Mark the human `ensure: absent` there and drop their `grants:`. |
+| `user offboard <name>` | `revoke` in every db file they're in. |
+| `user list [<name>]` | Who has what, across all db files. |
 
 Without db names, `sync-*` run for every file in `dbs/`, `--parallel N` at a time (default 4). Exit codes: `0` in sync, `3` drift, `1` error, `2` usage.
+
+## Granting and offboarding people
+
+Two steps: `user …` only edits the db files (review the diff, commit it); applying is separate and manual.
+
+```sh
+cnpg-users user grant alice cloudnative-pg.my-app.prod          # 1. config
+cnpg-users sync-users --apply                                    # 2. PR adds the role, then her SSM password is set
+```
+
+```sh
+cnpg-users user offboard alice                                   # 1. ensure: absent + her grants removed, everywhere
+cnpg-users sync-users                                            #    shows what still blocks dropping her role
+cnpg-users sync-users --apply                                    # 2. PR marks her role ensure: absent in values.yaml
+cnpg-users sync-grants --apply                                   #    REVOKE the grants she still holds
+```
+
+CNPG can't drop a role that still owns objects or holds privileges. `sync-users` lists those per database with the `REASSIGN OWNED … DROP OWNED …` to run first. Roles are cluster-wide: granting a human in a db file gives them access on every database of that cluster. Passwords are generated in SSM on first `--apply` if missing, and aren't deleted on offboarding.
 
 ## Files
 
@@ -68,12 +98,14 @@ repo: my-org/argocd                # where the CNPG values.yaml lives
 values_file: prod/my-app/cloudnative-pg/values.yaml
 values_roles_path: roles           # path to the CNPG roles list in values_file (default: roles)
 online: true                       # false: skip this db
-ignored_grantees: [pg_monitor]     # never touch these roles' grants
+ignored_grantees: [pg_monitor]     # skip these roles' table/sequence grants (schema, database and default privileges still managed)
 humans:
   - name: alice
     superuser: false
     roles: [pg_read_all_data]
-apps: [webapp, workers]
+  - name: bob
+    ensure: absent                 # offboarded, role not dropped yet
+apps: [webapp, workers]            # application roles, for reference only: never changed
 grants:
   app_db:                          # database
     workers:                       # grantee
@@ -82,6 +114,30 @@ grants:
 ```
 
 `user_passwords_store.yaml`: where human passwords live, one SSM parameter per role (`<aws_ssm_prefix><role>`).
+
+## How grants are written
+
+`import` turns live grants into the shortest list of statements that reproduces them exactly, and `sync-grants` expands that list back before comparing. Two things get collapsed:
+
+**All objects in a schema.** Privileges a role holds on every table of a schema (views and materialized views count as tables) become one `ON ALL TABLES IN SCHEMA` statement; the same for sequences. Anything extra is listed per object:
+
+```yaml
+workers:
+  - GRANT SELECT ON ALL TABLES IN SCHEMA public TO workers;    # every table has SELECT
+  - GRANT INSERT, UPDATE ON TABLE public.events TO workers;    # plus more on one of them
+```
+
+A privilege missing on even one table isn't collapsed, since `ON ALL …` would grant it there too. So one table the role has no grant on keeps the whole schema listed table by table.
+
+**Partitions.** A grant on a partitioned table covers all its partitions (declarative partitioning, at any depth); a partition is listed only for privileges beyond its parent's:
+
+```yaml
+  - GRANT SELECT, INSERT ON TABLE public.events TO workers;    # also events_2026_09, events_2026_10, …
+```
+
+`ON ALL …` and parent grants mean the objects that exist *when `sync-grants` runs*. A table or partition created later without the grant shows up as `To add`, so new objects get the same access as the rest instead of drifting silently.
+
+A role's privileges on objects it owns are implicit and never listed. `import` checks that its output expands back to exactly the live grants and warns if not.
 
 ## How roles are classified
 
@@ -94,8 +150,7 @@ grants:
 
 ## Good to know
 
-- `import` writes the shortest grant list that reproduces live grants exactly (`ON ALL TABLES IN SCHEMA`, one parent grant covering its partitions) and warns if it doesn't round-trip.
-- `import --write` rebuilds `grants:` and `humans:` from the live cluster, so apply your pending SQL or PR first, or your edits are lost.
+- `import --write` rebuilds `grants:` from the live cluster, so apply pending grant SQL first. For `humans:` it keeps edits not applied yet (a new human not created yet, `ensure: absent` until the role is gone, changed roles); `--prune` takes live as-is.
 - `--apply` reuses an open PR labeled `cnpg-users-grants` (rewriting its branch) instead of opening a new one.
 - Password statements carry a SCRAM verifier computed locally, never the plaintext. Missing SSM passwords are generated on `--apply`.
 - EKS logins are signed in-process with boto3; other kubeconfig auth works as usual.

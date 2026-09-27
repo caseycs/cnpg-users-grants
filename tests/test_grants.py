@@ -121,9 +121,16 @@ def test_live_grants():
     }
 
 
-def test_drop_ignored():
-    live = {Grant("table", "public", "t", "pg_monitor", "SELECT"), Grant("table", "public", "t", "x", "SELECT")}
-    assert drop_ignored(live, ["pg_monitor"]) == {Grant("table", "public", "t", "x", "SELECT")}
+def test_drop_ignored_only_skips_table_and_sequence_grants():
+    kept = {
+        Grant("table", "public", "t", "x", "SELECT"),
+        Grant("default", "public", "TABLES", "pg_monitor", "SELECT", "postgres"),
+        Grant("schema", "", "public", "pg_monitor", "CREATE"),
+        Grant("database", "", "app", "pg_monitor", "CONNECT"),
+    }
+    skipped = {Grant("table", "public", "t", "pg_monitor", "SELECT"),
+               Grant("sequence", "public", "s", "pg_monitor", "USAGE")}
+    assert drop_ignored(kept | skipped, ["pg_monitor"]) == kept
 
 
 # --- expansion -------------------------------------------------------------------
@@ -205,3 +212,17 @@ def test_plan_diff_and_output():
     to_grant, to_revoke = plan(["GRANT SELECT ON ALL TABLES IN SCHEMA public TO x;"], live, cat)
     assert format_statements(to_grant, cat) == ["GRANT SELECT ON TABLE public.b TO x;"]
     assert format_statements(to_revoke, cat, revoke=True) == ["REVOKE SELECT ON TABLE public.a FROM y;"]
+
+
+def test_plan_ignores_ignored_grantees_on_both_sides():
+    cat = catalog({("table", "public"): ["a"]})
+    live = live_grants(acl(object_grants=obj("pg_monitor", "public", "a", "SELECT")))
+    stmts = ["GRANT SELECT ON TABLE public.a TO webapp;", "GRANT INSERT ON TABLE public.a TO webapp;"]
+    to_grant, to_revoke = plan(stmts, live, cat, ["webapp", "pg_monitor"])
+    assert not to_grant and not to_revoke
+
+
+def test_plan_still_manages_default_privileges_of_ignored_grantees():
+    stmt = "ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT ON TABLES TO webapp;"
+    to_grant, _ = plan([stmt], set(), catalog(), ["webapp"])
+    assert to_grant == {Grant("default", "public", "TABLES", "webapp", "SELECT", "postgres")}

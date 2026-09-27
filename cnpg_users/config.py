@@ -4,6 +4,7 @@ A db given as a .yaml path is also looked up relative to that directory."""
 
 from __future__ import annotations
 
+import io
 import sys
 from dataclasses import dataclass, field, fields
 from pathlib import Path
@@ -33,10 +34,19 @@ class DbConfig:
     repo: str | None = None         # GitHub repo holding the ArgoCD values.yaml
     values_file: str | None = None  # path of values.yaml (CNPG roles list) in repo
     values_roles_path: str = "roles"  # dotted path of the roles list in values_file, e.g. cluster.roles
-    humans: list[dict] = field(default_factory=list)  # name, superuser, roles
-    apps: list[str] = field(default_factory=list)
+    humans: list[dict] = field(default_factory=list)  # name, superuser, roles; ensure: absent = being removed
+    apps: list[str] = field(default_factory=list)  # app role names, for reference only
     grants: dict = field(default_factory=dict)  # database -> grantee -> [statement]
     ignored_grantees: list[str] = field(default_factory=list)
+
+    @property
+    def present_humans(self) -> list[dict]:
+        return [h for h in self.humans if h.get("ensure") != "absent"]
+
+    @property
+    def absent_humans(self) -> list[str]:
+        """Humans marked ensure: absent (revoked, role not dropped yet)."""
+        return [h["name"] for h in self.humans if h.get("ensure") == "absent"]
 
     @property
     def header(self) -> str:
@@ -89,10 +99,29 @@ def load_db_config(root: Path, name: str) -> DbConfig:
         values_file=doc.get("values_file"),
         values_roles_path=str(doc.get("values_roles_path") or "roles"),
         humans=[dict(h) for h in doc.get("humans") or []],
-        apps=[str(a) for a in doc.get("apps") or []],
+        apps=[str(a) if isinstance(a, str) else str(a["name"]) for a in doc.get("apps") or []],
         grants=doc.get("grants") or {},
         ignored_grantees=[str(r) for r in doc.get("ignored_grantees") or []],
     )
+
+
+def dump_doc(doc) -> str:
+    buf = io.StringIO()
+    make_write_yaml().dump(doc, buf)
+    return buf.getvalue()
+
+
+def flush_new_keys(text: str, new_keys: list[str]) -> str:
+    """ruamel puts a blank line before keys appended after a block that ended
+    with one; drop it so new keys sit flush."""
+    lines = text.splitlines(keepends=True)
+    for key in new_keys:
+        for i, line in enumerate(lines):
+            if line.startswith(f"{key}:"):
+                if i > 0 and lines[i - 1].strip() == "":
+                    del lines[i - 1]
+                break
+    return "".join(lines)
 
 
 def make_write_yaml() -> YAML:

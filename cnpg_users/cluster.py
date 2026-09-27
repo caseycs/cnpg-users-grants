@@ -80,6 +80,20 @@ class Cluster:
             sys.exit(f"psql on {self.db.name} ({where}) failed: {(err or status_raw or '').strip()}")
         return out
 
+    def execute(self, statements: list[str], database: str, batch_chars: int = 60_000) -> None:
+        """Run statements in `database`, one transaction per batch (a batch is
+        one psql -c, kept well under the exec argument size limit)."""
+        batch: list[str] = []
+        size = 0
+        for s in statements + [None]:
+            if s is None or (batch and size + len(s) > batch_chars):
+                if batch:
+                    self.psql("BEGIN;\n" + "\n".join(batch) + "\nCOMMIT;", database=database)
+                batch, size = [], 0
+            if s is not None:
+                batch.append(s)
+                size += len(s) + 1
+
     def sql(self, sql: str, database: str | None = None):
         out = self.psql(sql, database=database)
         try:
@@ -100,6 +114,24 @@ class Cluster:
         return set(self.sql(
             f"SELECT coalesce(jsonb_agg(rolname), '[]'::jsonb) FROM pg_roles WHERE rolname IN ({in_list})"
         ))
+
+    def drop_blockers(self, names: list[str]) -> list[dict]:
+        """What stops DROP ROLE for these roles: per role and database, objects
+        owned and privileges held (pg_shdepend), with the database's owner."""
+        if not names:
+            return []
+        in_list = ", ".join("'" + n.replace("'", "''") + "'" for n in names)
+        return self.sql(f"""
+            SELECT coalesce(jsonb_agg(q ORDER BY q.role, q.database), '[]'::jsonb) FROM (
+              SELECT r.rolname AS role, coalesce(d.datname, '') AS database,
+                     coalesce(pg_get_userbyid(d.datdba), 'postgres') AS db_owner,
+                     count(*) FILTER (WHERE s.deptype = 'o') AS owned,
+                     count(*) FILTER (WHERE s.deptype IN ('a', 'i')) AS privileges
+              FROM pg_shdepend s
+              JOIN pg_roles r ON r.oid = s.refobjid
+              LEFT JOIN pg_database d ON d.oid = s.dbid
+              WHERE s.refclassid = 'pg_authid'::regclass AND r.rolname IN ({in_list})
+              GROUP BY r.rolname, d.datname, d.datdba) q""")
 
     def set_passwords(self, statements: list[str]) -> None:
         """Run ALTER ROLE ... PASSWORD statements in one transaction, with
