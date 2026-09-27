@@ -1,32 +1,25 @@
 # cnpg-users-grants
 
-Two jobs for many [CloudNativePG](https://cloudnative-pg.io) clusters, from one directory of YAML files:
+For many [CloudNativePG](https://cloudnative-pg.io) clusters deployed by GitOps (ArgoCD, FluxCD, …), managed from one directory of YAML files:
 
-1. **Human users:** one place to give people access or take it away on every cluster, with the same password everywhere.
-2. **Grants and permissions:** a reviewed record of what every role can do in every database, and a check that tells you when reality drifts from it.
+- **Human users.** Grant, revoke and offboard people on every cluster in one place, with one password per person everywhere (AWS SSM, GCP Secret Manager or sops). Role changes arrive as PRs to your GitOps repos and take effect once a person merges them. App roles are listed for reference and never touched.
+- **Grants.** Every role's grants, apps included, as reviewable code. Migrations and one-off SQL set most of them; `sync` shows where a database drifts from the file (non-zero exit, so it fits CI) and the exact `GRANT`/`REVOKE` to fix it.
 
-## Scope
-
-Several CNPG clusters, each deployed by GitOps (ArgoCD, FluxCD, …) from a values file in a GitHub repo that holds the cluster's [managed roles](https://cloudnative-pg.io/documentation/current/declarative_role_management/) list.
-
-**Human users** are people who log in with their own password. The tool manages their role (created, memberships, `superuser`, dropped) through PRs to the values files, and their password from one secret store. Application roles are listed by name for reference and never changed: their values-file entries, passwords (k8s secrets) and memberships stay with whoever runs the app. A role that is neither a listed human nor an app gets a warning, never a change.
-
-**Grants** cover every role, apps included: tables, sequences, schemas, databases and default privileges. They're usually set by the apps themselves (migrations, one-off SQL), so this is a way to oversee and validate them: `import` records what's there, the file gets reviewed like code, and `sync-grants` shows any difference, in CI or before you apply it.
-
-## The problem
-
-- **Users:** every cluster has its own roles list in its own repo. Giving someone access, or taking it away, means editing several files in several repos, and the same person ends up with a different password on each cluster.
-- **Grants:** they pile up from migrations and one-off scripts. After a while nobody can say who can read or write what, a new table is missing a grant nobody noticed, or a worker suddenly gets `permission denied`.
-
-## What it does
-
-- **One place for human users:** `user grant` / `revoke` / `offboard` edit the db files; `sync-users --apply` turns that into one PR per GitOps repo, waits for a person to merge it and GitOps to roll it out, then sets passwords.
-- **One password per person:** each human's password lives once in a secret store (AWS SSM, GCP Secret Manager or a sops-encrypted file), and is set on every cluster they're in, as a SCRAM verifier, never plaintext.
-- **Grants as code:** a compact snapshot of each database's grants, and the exact `GRANT`/`REVOKE` SQL that makes a cluster match it. It exits non-zero on drift, so it works in CI.
-
-Nothing changes a database or repo unless you ask: without `--apply` both `sync-*` commands only print what they would do. `sync-grants --apply` runs the SQL after a confirmation; `sync-users --apply` opens PRs and sets passwords.
+Nothing changes a database or repo unless you pass `--apply`.
 
 ## Quick start
+
+```mermaid
+flowchart LR
+  import["import --write<br/>live clusters → dbs/*.yaml"] --> edit["user grant / revoke / offboard<br/>edit dbs/*.yaml"]
+  edit --> review["review and commit<br/>the db files"]
+  review --> sync["sync<br/>what differs, per db"]
+  sync -- "--apply" --> pr["one PR per GitOps repo"]
+  pr --> merge(["a person merges"])
+  merge --> rollout["GitOps syncs,<br/>CNPG creates / drops roles"]
+  rollout --> passwords["passwords set<br/>from the store"]
+  passwords --> sql["confirm, then<br/>GRANT / REVOKE run"]
+```
 
 Requires [uv](https://docs.astral.sh/uv/), a kubeconfig with access to the clusters, `gh` logged in (for `sync-users`) and access to your password store (AWS, GCP or sops keys).
 
@@ -50,8 +43,8 @@ EOF
 
 # fill humans/apps/grants from the live cluster
 uvx --from git+https://github.com/caseycs/cnpg-users-grants@v0.2.0 cnpg-users import cloudnative-pg.my-app.prod --write
-# anything drifted?
-uvx --from git+https://github.com/caseycs/cnpg-users-grants@v0.2.0 cnpg-users sync-grants
+# what differs, users and grants?
+uvx --from git+https://github.com/caseycs/cnpg-users-grants@v0.2.0 cnpg-users sync
 ```
 <!-- x-release-please-end -->
 
