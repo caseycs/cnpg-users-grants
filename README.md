@@ -7,11 +7,12 @@ Grants as code for [CloudNativePG](https://cloudnative-pg.io), with drift detect
 
 Nothing changes a database or repo unless you pass `--apply`. The tool reaches Postgres through `kubectl exec` into the primary pod, so all it needs is a kubeconfig: no network path to the database and no database credentials.
 
-## The problem
+## Use case
 
-CNPG manages roles declaratively ([managed roles](https://cloudnative-pg.io/documentation/current/declarative_role_management/)) and databases through the `Database` CRD, but grants have no declarative home. Migrations, one-off SQL and people with psql set them, and after a while nobody can say who can access what, or why a worker suddenly gets `permission denied` on a table created last week.
+Small and medium teams running several CNPG clusters through GitOps, who want to:
 
-Humans have a second problem. Every cluster keeps its roles list in its own values file, often in its own repo. Giving someone access, or taking it away, means editing several files in several repos, and the same person ends up with a different password on every cluster.
+- **Simplify human access control.** Give people access, change it and offboard them on every cluster from one place, with one password per person.
+- **Maintain grants for application roles.** Keep what each app can access reviewed in code, and catch drift (a migration that forgot a grant, a table created without one) before the app hits `permission denied`.
 
 ## Approach
 
