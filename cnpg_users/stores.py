@@ -1,4 +1,4 @@
-"""Where human passwords live: user_passwords_store.yaml picks one store.
+"""Where human passwords live: passwords_store.yaml picks one store.
 
     type: aws-ssm              (default) one SecureString parameter per role:
       aws_profile, aws_region, aws_ssm_prefix  <prefix><role>
@@ -26,7 +26,7 @@ from typing import Any, Callable, Protocol
 
 from ruamel.yaml import YAML
 
-PASSWORDS_STORE = "user_passwords_store.yaml"
+PASSWORDS_STORE = "passwords_store.yaml"
 ROLE_NAME = re.compile(r"[a-z_][a-z0-9_]*")
 
 

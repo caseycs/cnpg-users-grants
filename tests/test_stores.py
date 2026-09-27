@@ -8,7 +8,7 @@ from cnpg_users.stores import AwsSsmStore, GcpSecretManagerStore, SopsStore, loa
 
 
 def settings(tmp_path, text):
-    (tmp_path / "user_passwords_store.yaml").write_text(text)
+    (tmp_path / "passwords_store.yaml").write_text(text)
     return load_store(tmp_path)
 
 

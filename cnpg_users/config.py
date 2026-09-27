@@ -1,5 +1,5 @@
 """Files in the directory the tool is run from: clusters/<cluster>.yaml (one
-per CNPG cluster) and user_passwords_store.yaml (where human passwords live).
+per CNPG cluster) and passwords_store.yaml (where human passwords live).
 A cluster given as a .yaml path is also looked up relative to that directory."""
 
 from __future__ import annotations

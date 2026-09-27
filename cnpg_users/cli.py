@@ -1,14 +1,15 @@
 """Manage CNPG human users and app grants across clusters.
 
 Config layout (read from the current directory):
-    user_passwords_store.yaml
+    passwords_store.yaml
                       where human passwords live: type aws-ssm (aws_profile,
                       aws_region, aws_ssm_prefix), gcp-secret-manager
                       (gcp_project, gcp_secret_prefix) or sops (sops_file)
-    clusters/<cluster>.yaml     one file per database: context, namespace, cluster,
-                      repo, values_file, values_roles_path, ignored_grantees,
-                      humans, apps,
-                      grants
+    clusters/<cluster>.yaml
+                      one file per CNPG cluster: context, namespace, cluster,
+                      repo, repo_provider, gitlab_host, values_file,
+                      values_roles_path, online, ignored_grantees, humans,
+                      apps, grants
 
 Commands:
     import <cluster>        Explore live roles and grants, classify every
@@ -52,7 +53,7 @@ Classification (live cluster object + names in the password store):
       resourceVersion), a passwordSecret reference in the Cluster spec, or
       the bootstrap owner with its initdb secret → app
     - ensure: absent in the Cluster's managed roles → skipped
-    - a password in the store (user_passwords_store.yaml)
+    - a password in the store (passwords_store.yaml)
       → human (superuser flag and role memberships from the live role)
     - everything else → app
 
