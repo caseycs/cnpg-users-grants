@@ -47,8 +47,19 @@ def cmd_sync_grants(db: DbConfig, out: TextIO = sys.stdout) -> tuple[bool, Grant
     if not db.online:
         print(f"{db.header}: offline — skipped", file=out)
         return False, None
+    body, drift, result = grants_body(db)
+    if not body:
+        print(f"{db.header}: in sync", file=out)
+    else:
+        print(db.header, file=out)
+        print(body, end="", file=out)
+    return drift, result
 
-    cluster = Cluster(db)
+
+def grants_body(db: DbConfig, cluster: Cluster | None = None) -> tuple[str, bool, GrantsPlan]:
+    """The grants part of a report ('' if in sync), whether anything differs,
+    and the plan for apply_grants. db must be online."""
+    cluster = cluster or Cluster(db)
     result = GrantsPlan(db, cluster)
     lines: list[str] = []
     for database in cluster.databases():
@@ -61,12 +72,7 @@ def cmd_sync_grants(db: DbConfig, out: TextIO = sys.stdout) -> tuple[bool, Grant
             if stmts:
                 lines.append(f"    {title}:")
                 lines += [f"      {s}" for s in stmts]
-    if not lines:
-        print(f"{db.header}: in sync", file=out)
-        return False, result
-    print(db.header, file=out)
-    print("\n".join(lines), file=out)
-    return True, result
+    return "".join(line + "\n" for line in lines), bool(lines), result
 
 
 def confirm(question: str, assume_yes: bool, ask: Callable[[str], str] = input) -> bool:

@@ -160,3 +160,17 @@ def test_drop_blockers_are_reported(env):
     by_db = {r["database"]: r for r in rows}
     assert by_db[DATABASE]["owned"] >= 1
     assert by_db[DATABASE]["db_owner"] == "app"
+
+
+def test_sync_reports_users_and_grants_together(env, monkeypatch):
+    from cnpg_users.sync_all import cmd_sync
+    monkeypatch.setattr(users, "get_file", lambda repo, path: RepoFile(VALUES_YAML, "sha"))
+    out = io.StringIO()
+    drift, plan = cmd_sync(db(env), fake_store({}), out=out)
+    text = out.getvalue()
+    assert drift and text.count(db(env).header) == 1
+    assert "+    ensure: absent" in text                            # users part: alice is being removed
+    assert "before these roles can be dropped" in text              # ... but still owns a table
+    # grants part: the table the previous test created is missing webapp's ON ALL TABLES grant
+    assert "Database: app\n    To add:\n      GRANT SELECT ON TABLE public.alice_notes TO webapp;" in text
+    assert plan.users is not None and [d.database for d in plan.grants.databases] == ["app"]

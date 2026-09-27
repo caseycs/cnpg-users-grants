@@ -66,6 +66,7 @@ uvx --from git+https://github.com/caseycs/cnpg-users-grants@v0.1.0 cnpg-users sy
 | Command | What it does |
 |---|---|
 | `import <db> [--write] [--prune]` | Read roles and grants from the live cluster, show the diff against `dbs/<db>.yaml`; `--write` saves it. |
+| `sync [<db>…] [--apply]` | Both of the below in one run: one report per db with users and grants; `--apply` does the users flow first, then grants (asks first). |
 | `sync-grants [<db>…]` | Print the SQL that makes live grants match the file. |
 | `sync-grants --apply [--yes]` | Run it: asks first (`--yes` skips, e.g. in CI), one transaction per database, then re-checks. |
 | `sync-users [<db>…]` | Print the values.yaml change and password statements for humans. |
@@ -75,7 +76,7 @@ uvx --from git+https://github.com/caseycs/cnpg-users-grants@v0.1.0 cnpg-users sy
 | `user offboard <name>` | `revoke` in every db file they're in. |
 | `user list [<name>]` | Who has what, across all db files. |
 
-Without db names, `sync-*` run for every file in `dbs/`, `--parallel N` at a time (default 4). Exit codes: `0` in sync, `3` drift, `1` error, `2` usage.
+Without db names, `sync` and `sync-*` run for every file in `dbs/`, `--parallel N` at a time (default 4). Exit codes: `0` in sync, `3` drift, `1` error, `2` usage.
 
 ## Granting and offboarding people
 
