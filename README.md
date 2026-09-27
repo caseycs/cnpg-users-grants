@@ -1,25 +1,15 @@
 # cnpg-users-grants
 
-Grants as code for [CloudNativePG](https://cloudnative-pg.io), with drift detection, plus human users managed across many clusters from one directory of YAML files.
+Access control for [CloudNativePG](https://cloudnative-pg.io), for small and medium teams running several clusters through GitOps: manage people's access on every cluster from one place, and keep application roles' grants in code with drift detection.
 
-- **Grants.** Every role's table, schema and database grants, apps included, as reviewable code. `import` snapshots them from the live cluster. `sync` then shows where a database drifted and prints the exact `GRANT`/`REVOKE` to fix it. It exits non-zero on drift, so it fits CI.
-- **Human users.** Grant, revoke and offboard people on every cluster in one place, with one password per person everywhere (AWS SSM, GCP Secret Manager or sops). Role changes arrive as PRs to your GitOps repos (ArgoCD, FluxCD, …) and take effect once someone merges them. App roles are listed for reference and never touched.
-
-Nothing changes a database or repo unless you pass `--apply`. The tool reaches Postgres through `kubectl exec` into the primary pod, so all it needs is a kubeconfig: no network path to the database and no database credentials.
-
-## Use case
-
-Small and medium teams running several CNPG clusters through GitOps, who want to:
-
-- **Simplify human access control.** Give people access, change it and offboard them on every cluster from one place, with one password per person.
-- **Maintain grants for application roles.** Keep what each app can access reviewed in code, and catch drift (a migration that forgot a grant, a table created without one) before the app hits `permission denied`.
+Nothing changes a database or repo unless you pass `--apply`. Postgres is reached through `kubectl exec` into the primary pod, so a kubeconfig is all it needs: no network path to the database and no database credentials.
 
 ## Approach
 
 - **One place for human roles.** Which people have a role on which cluster, and with what memberships, is tracked in `clusters/`, one file per CNPG cluster. `user grant` / `revoke` / `offboard` edit them across all clusters at once, and the tool turns those edits into one PR per GitOps repo. App roles stay wherever they're declared now; they're only listed by name.
 - **CNPG manages the roles.** Human roles are declared as the cluster's [managed roles](https://cloudnative-pg.io/documentation/current/declarative_role_management/) in its values file, and the operator creates, alters and drops them. The tool never does that over SQL; it changes the declaration.
-- **Passwords stored centrally.** Each person's password lives once in your secret store. A cluster only receives the SCRAM verifier, which Postgres keeps anyway, so no cluster holds a plaintext copy in a Kubernetes Secret.
-- **Grants as code, with drift detection.** Every role's grants, apps included, are kept in the cluster files, since CNPG has no declaration for them. `sync-grants` compares them with the live databases and exits non-zero on drift, printing the `GRANT`/`REVOKE` to fix it.
+- **Passwords stored centrally.** Each person's password lives once in your secret store (AWS SSM, GCP Secret Manager or sops). A cluster only receives the SCRAM verifier, which Postgres keeps anyway, so no cluster holds a plaintext copy in a Kubernetes Secret.
+- **Grants as code, with drift detection.** CNPG has no declaration for grants, so every role's grants, apps included, are kept in the cluster files; `import` snapshots them from the live cluster. `sync-grants` prints the `GRANT`/`REVOKE` that fixes any drift and exits non-zero, so it fits CI.
 
 **Scope.** The users half assumes a GitHub repo (via `gh`) holding each cluster's Helm values file with its CNPG roles list. `sync-grants` needs only kubeconfig access. `import` also reads the password store, to tell humans from apps.
 
