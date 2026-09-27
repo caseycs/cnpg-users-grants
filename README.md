@@ -72,7 +72,7 @@ Requires [uv](https://docs.astral.sh/uv/) and a kubeconfig with access to the cl
 <!-- x-release-please-start-version -->
 ```sh
 mkdir cnpg-users-grants && cd cnpg-users-grants   # configs live in the directory you run from
-cat > user_passwords_store.yaml <<'EOF'
+cat > passwords_store.yaml <<'EOF'
 type: aws-ssm                      # or gcp-secret-manager / sops, see Files below
 aws_profile: default
 aws_region: eu-central-1
@@ -165,7 +165,7 @@ grants:
       - GRANT SELECT, USAGE ON SEQUENCE public.events_id_seq TO workers;
 ```
 
-`user_passwords_store.yaml`: where human passwords live. Pick one `type`:
+`passwords_store.yaml`: where human passwords live. Pick one `type`:
 
 ```yaml
 type: aws-ssm                      # default: one SecureString parameter per role, <prefix><role>
