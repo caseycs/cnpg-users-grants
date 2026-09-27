@@ -6,20 +6,10 @@ from __future__ import annotations
 
 import io
 import sys
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ruamel.yaml import YAML
-
-
-PASSWORDS_STORE = "user_passwords_store.yaml"
-
-
-@dataclass
-class SsmSettings:
-    aws_profile: str = "default"
-    aws_region: str = "eu-central-1"
-    aws_ssm_prefix: str = "/cnpg-user/"
 
 
 @dataclass
@@ -52,17 +42,6 @@ class DbConfig:
     def header(self) -> str:
         """First line of every per-db report."""
         return f"{self.name} (cluster {self.cluster} in ns {self.namespace})"
-
-
-def load_ssm_settings(root: Path) -> SsmSettings:
-    path = root / PASSWORDS_STORE
-    if not path.is_file():
-        sys.exit(f"passwords store settings not found: {path}")
-    data = YAML(typ="safe").load(path) or {}
-    unknown = set(data) - {f.name for f in fields(SsmSettings)}
-    if unknown:
-        sys.exit(f"{path}: unknown keys: {', '.join(sorted(unknown))}")
-    return SsmSettings(**{k: str(v) for k, v in data.items()})
 
 
 def list_db_names(root: Path) -> list[str]:

@@ -17,18 +17,19 @@ Every cluster has its own roles list in its own repo. Giving someone access, or 
 ## What it does
 
 - **One place for human users**: every cluster's humans are in one directory of YAML files. `user grant` / `revoke` / `offboard` edit them; `sync-users --apply` turns that into one PR per GitOps repo and waits until the roles are created or dropped.
-- **One password per person**: each human's password lives in AWS SSM once, and is set on every cluster they're in, as a SCRAM verifier, never plaintext.
+- **One password per person**: each human's password lives once in a secret store (AWS SSM, GCP Secret Manager or a sops-encrypted file), and is set on every cluster they're in, as a SCRAM verifier, never plaintext.
 - **Grants as code**: a snapshot of each database's grants, and the exact `GRANT`/`REVOKE` SQL that makes a cluster match it. It exits non-zero on drift, so it works in CI.
 
 Nothing changes a database or repo unless you ask: without `--apply` both `sync-*` commands only print what they would do. `sync-grants --apply` runs the SQL after a confirmation; `sync-users --apply` opens PRs and sets passwords.
 
 ## Quick start
 
-Requires [uv](https://docs.astral.sh/uv/), a kubeconfig with access to the clusters, `gh` logged in (for `sync-users`) and AWS credentials (SSM, EKS).
+Requires [uv](https://docs.astral.sh/uv/), a kubeconfig with access to the clusters, `gh` logged in (for `sync-users`) and access to your password store (AWS, GCP or sops keys).
 
 ```sh
 mkdir cnpg-users-grants && cd cnpg-users-grants   # configs live in the directory you run from
 cat > user_passwords_store.yaml <<'EOF'
+type: aws-ssm                      # or gcp-secret-manager / sops, see Files below
 aws_profile: default
 aws_region: eu-central-1
 aws_ssm_prefix: /cnpg-user/
@@ -82,7 +83,7 @@ Two steps: `user …` only edits the db files (review the diff, commit it); appl
 
 ```sh
 cnpg-users user grant alice cloudnative-pg.my-app.prod          # 1. config
-cnpg-users sync-users --apply                                    # 2. PR adds the role, then her SSM password is set
+cnpg-users sync-users --apply                                    # 2. PR adds the role, then her stored password is set
 ```
 
 ```sh
@@ -92,7 +93,7 @@ cnpg-users sync-users --apply                                    # 2. PR marks h
 cnpg-users sync-grants --apply                                   #    REVOKE the grants she still holds
 ```
 
-CNPG can't drop a role that still owns objects or holds privileges. `sync-users` lists those per database with the `REASSIGN OWNED … DROP OWNED …` to run first. Roles are cluster-wide: granting a human in a db file gives them access on every database of that cluster. Passwords are generated in SSM on first `--apply` if missing, and aren't deleted on offboarding.
+CNPG can't drop a role that still owns objects or holds privileges. `sync-users` lists those per database with the `REASSIGN OWNED … DROP OWNED …` to run first. Roles are cluster-wide: granting a human in a db file gives them access on every database of that cluster. Passwords are generated in the store on first `--apply` if missing, and aren't deleted on offboarding.
 
 ## Files
 
@@ -121,7 +122,27 @@ grants:
       - GRANT SELECT, USAGE ON SEQUENCE public.events_id_seq TO workers;
 ```
 
-`user_passwords_store.yaml`: where human passwords live, one SSM parameter per role (`<aws_ssm_prefix><role>`).
+`user_passwords_store.yaml`: where human passwords live. Pick one `type`:
+
+```yaml
+type: aws-ssm                      # default: one SecureString parameter per role, <prefix><role>
+aws_profile: default
+aws_region: eu-central-1
+aws_ssm_prefix: /cnpg-user/
+```
+
+```yaml
+type: gcp-secret-manager           # one secret per role, <prefix><role>; Application Default Credentials
+gcp_project: my-project
+gcp_secret_prefix: cnpg-user-      # default
+```
+
+```yaml
+type: sops                         # one encrypted file: {role: password}; any sops key (age, KMS, PGP)
+sops_file: passwords.sops.yaml     # relative to the current directory
+```
+
+GCP needs the `gcp` extra: `uvx --from 'cnpg-users-grants[gcp] @ git+https://github.com/caseycs/cnpg-users-grants' cnpg-users …`. The sops store needs `sops` on the PATH; new passwords are written with `sops set --value-stdin`, so they never appear in process listings.
 
 ## How grants are written
 
@@ -153,14 +174,14 @@ A role's privileges on objects it owns are implicit and never listed. `import` c
 
 - **skipped**: `pg_*` / `cnpg_*` built-ins, CNPG-reserved roles, `ensure: absent`
 - **app**: a `DatabaseRole` CR, or a password from a k8s secret
-- **human**: a password parameter in SSM
+- **human**: a password in the store
 - **app**: everything else
 
 ## Good to know
 
 - `import --write` rebuilds `grants:` from the live cluster, so apply pending grant SQL first. For `humans:` it keeps edits not applied yet (a new human not created yet, `ensure: absent` until the role is gone, changed roles); `--prune` takes live as-is.
 - `--apply` reuses an open PR labeled `cnpg-users-grants` (rewriting its branch) instead of opening a new one.
-- Password statements carry a SCRAM verifier computed locally, never the plaintext. Missing SSM passwords are generated on `--apply`.
+- Password statements carry a SCRAM verifier computed locally, never the plaintext. Missing passwords are generated and stored on `--apply`.
 - EKS logins are signed in-process with boto3; other kubeconfig auth works as usual.
 
 ## Development
@@ -176,4 +197,4 @@ task kind:down                   # delete the kind cluster
 uv run cnpg-users sync-grants    # run from the checkout (configs from the current directory)
 ```
 
-The integration tests create a throwaway namespace with a one-instance CNPG `Cluster` and run `import`, `sync-grants --apply`, `sync-users` passwords (including a real login) and the drop-blocker report against it. GitHub and AWS SSM are faked. `CNPG_IT_KEEP=1` keeps the namespace for debugging.
+The integration tests create a throwaway namespace with a one-instance CNPG `Cluster` and run `import`, `sync-grants --apply`, `sync-users` passwords (including a real login) and the drop-blocker report against it. GitHub and the password store are faked (the stores have their own tests, sops against a real `sops`). `CNPG_IT_KEEP=1` keeps the namespace for debugging.

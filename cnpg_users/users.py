@@ -1,6 +1,6 @@
 """sync-users: what makes a cluster's users match humans:/apps: in the db file
 - the values.yaml (CNPG roles: list) change in its GitHub repo, and
-- ALTER ROLE statements for humans whose password differs from SSM.
+- ALTER ROLE statements for humans whose password differs from the store.
 With --apply, after every db was read: one PR per repo with all its
 values.yaml changes, wait for the roles to appear/go once merged and synced,
 then set the passwords."""
@@ -14,11 +14,11 @@ from dataclasses import dataclass
 from typing import Callable, TextIO
 
 from .cluster import Cluster
-from .config import DbConfig, SsmSettings
+from .config import DbConfig
 from .diff import print_diff
 from .github import FileChange, GitHubError, RepoFile, get_file, open_pr
 from .passwords import generate_password, password_matches, scram_verifier
-from .ssm import ssm_create_password, ssm_passwords
+from .stores import PasswordStore
 from .values import RolesChange, sync_roles
 
 POLL_SECONDS = 10
@@ -34,7 +34,7 @@ def password_plan(
         if name not in verifiers:
             status.append(f"{name}: role not created yet — deploy values.yaml, then re-run")
         elif name not in passwords:
-            status.append(f"{name}: no password in SSM (--apply generates one)")
+            status.append(f"{name}: no password in the store (--apply generates one)")
         else:
             matches = password_matches(passwords[name], name, verifiers[name])
             if matches:
@@ -118,7 +118,7 @@ class UsersPlan:
         return self.change.text != self.current.text
 
 
-def plan_users(db: DbConfig, ssm: SsmSettings, apply: bool = False,
+def plan_users(db: DbConfig, store: PasswordStore, apply: bool = False,
                out: TextIO = sys.stdout) -> tuple[bool, UsersPlan | None]:
     """Read phase (safe to run in parallel): write what isn't in sync to out
     (the values.yaml diff and, without apply, passwords that differ and
@@ -150,7 +150,7 @@ def plan_users(db: DbConfig, ssm: SsmSettings, apply: bool = False,
         print(line, file=body)
     statements: list[str] = []
     if not apply:  # with apply, passwords are checked after the roles are in place
-        statements, status = password_plan(p.names, ssm_passwords(ssm, p.names), p.cluster.password_verifiers(p.names))
+        statements, status = password_plan(p.names, store.passwords(p.names), p.cluster.password_verifiers(p.names))
         pending = [line for line in status if not line.endswith(": in sync")]
         if pending:
             print("  passwords:", file=body)
@@ -168,7 +168,7 @@ def plan_users(db: DbConfig, ssm: SsmSettings, apply: bool = False,
     return p.values_pending or bool(statements) or bool(blocked), p
 
 
-def apply_all(plans: list[UsersPlan], ssm: SsmSettings, timeout: float = 180) -> bool:
+def apply_all(plans: list[UsersPlan], store: PasswordStore, timeout: float = 180) -> bool:
     """Apply phase, after every db was read: one PR per repo with all its
     values.yaml changes, one wait for every affected cluster, then passwords
     db by db. True if anything still differs."""
@@ -223,20 +223,20 @@ def apply_all(plans: list[UsersPlan], ssm: SsmSettings, timeout: float = 180) ->
     drift = bool(still_pending)
     for p in plans:
         print(f"\n{p.db.name}: passwords", flush=True)
-        drift |= set_passwords(p, ssm)
+        drift |= set_passwords(p, store)
     sys.stdout.flush()
     return drift
 
 
-def set_passwords(p: UsersPlan, ssm: SsmSettings) -> bool:
-    """Generate missing SSM passwords, set the ones that differ; True if any still differ."""
+def set_passwords(p: UsersPlan, store: PasswordStore) -> bool:
+    """Generate missing store passwords, set the ones that differ; True if any still differ."""
     names, cluster = p.names, p.cluster
-    passwords = ssm_passwords(ssm, names)
+    passwords = store.passwords(names)
     for name in names:
         if name not in passwords:
             passwords[name] = generate_password()
-            param = ssm_create_password(ssm, name, passwords[name])
-            print(f"  generated a password for {name}: stored in SSM as {param}")
+            where = store.create(name, passwords[name])
+            print(f"  generated a password for {name}: stored in {where}")
     statements, status = password_plan(names, passwords, cluster.password_verifiers(names))
     pending = [line for line in status if not line.endswith(": in sync")]
     if not pending:
@@ -247,7 +247,7 @@ def set_passwords(p: UsersPlan, ssm: SsmSettings) -> bool:
         return False
     cluster.set_passwords(statements)
     print(f"  set {len(statements)} password(s)")
-    statements, status = password_plan(names, ssm_passwords(ssm, names), cluster.password_verifiers(names))
+    statements, status = password_plan(names, store.passwords(names), cluster.password_verifiers(names))
     for line in status:
         if not line.endswith(": in sync"):
             print(f"  still {line}")

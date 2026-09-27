@@ -1,8 +1,7 @@
 from pathlib import Path
 
-import pytest
 
-from cnpg_users.config import SsmSettings, list_db_names, load_db_config, load_ssm_settings
+from cnpg_users.config import list_db_names, load_db_config
 from cnpg_users.grants import Catalog, drop_ignored, live_grants, plan
 from cnpg_users.importer import build_grants_config, classify_roles, update_config
 
@@ -84,18 +83,10 @@ def test_classify_roles():
         {"name": "writer", "superuser": False, "roles": ["pg_read_all_data", "pg_write_all_data"]},
     ]
     assert got.apps == ["crd_app", "declared_no_ssm", "other", "owner_app", "secret_app", "synced_app"]
-    assert got.app_reasons["other"] == "no password in SSM"
+    assert got.app_reasons["other"] == "no password in the store"
     assert sorted(got.skipped) == [
         "gone (ensure: absent)", "pg_read_all_data (system)", "postgres (system)", "reserved_role (system)",
     ]
-
-
-def test_ssm_settings(tmp_path):
-    (tmp_path / "user_passwords_store.yaml").write_text("aws_profile: p\naws_ssm_prefix: /x/\n")
-    assert load_ssm_settings(tmp_path) == SsmSettings("p", "eu-central-1", "/x/")
-    (tmp_path / "user_passwords_store.yaml").write_text("profile: p\n")
-    with pytest.raises(SystemExit, match="unknown keys: profile"):
-        load_ssm_settings(tmp_path)
 
 
 def test_build_grants_config_roundtrips_and_ignores():
