@@ -5,27 +5,27 @@ Config layout (read from the current directory):
                       where human passwords live: type aws-ssm (aws_profile,
                       aws_region, aws_ssm_prefix), gcp-secret-manager
                       (gcp_project, gcp_secret_prefix) or sops (sops_file)
-    dbs/<db>.yaml     one file per database: context, namespace, cluster,
+    clusters/<cluster>.yaml     one file per database: context, namespace, cluster,
                       repo, values_file, values_roles_path, ignored_grantees,
                       humans, apps,
                       grants
 
 Commands:
-    import <db>        Explore live roles and grants, classify every
+    import <cluster>        Explore live roles and grants, classify every
                        non-system role as human or app, print a report and a
-                       diff against dbs/<db>.yaml; --write updates it.
-    sync [<db>...] [--parallel N] [--apply [--yes] [--apply-timeout S]]
+                       diff against clusters/<cluster>.yaml; --write updates it.
+    sync [<cluster>...] [--parallel N] [--apply [--yes] [--apply-timeout S]]
                        sync-users and sync-grants in one run: one report per
-                       db with both parts; --apply does the users flow first,
+                       cluster with both parts; --apply does the users flow first,
                        then the grants (after a confirmation).
-    sync-grants [<db>...] [--parallel N] [--apply [--yes]]
-                       (default: every dbs/*.yaml; N at a time, default 4,
+    sync-grants [<cluster>...] [--parallel N] [--apply [--yes]]
+                       (default: every clusters/*.yaml; N at a time, default 4,
                        printed in order)
                        Print the GRANT/REVOKE SQL that makes live grants match
-                       grants: in dbs/<db>.yaml; --apply runs it after a
+                       grants: in clusters/<cluster>.yaml; --apply runs it after a
                        confirmation (--yes skips it). Exit code:
                        0 in sync, 3 drift found, 1/2 error/usage.
-    sync-users [<db>...] [--parallel N]
+    sync-users [<cluster>...] [--parallel N]
                        Print the diff that makes the CNPG roles list in the
                        repo's values.yaml (at values_roles_path) match
                        humans:/apps: (humans present with their
@@ -33,16 +33,16 @@ Commands:
                        absent), and ALTER ROLE statements for humans whose
                        password differs from the store (as a SCRAM verifier, never
                        the plaintext). Same exit codes as sync-grants.
-                       --apply, after reading every db: one PR per repo with
+                       --apply, after reading every cluster: one PR per repo with
                        all its values.yaml changes, labeled
                        cnpg-users-grants (an open PR with that label is
                        rewritten, else branch cnpg-users/sync gets a new
                        one); one wait of --apply-timeout seconds (default
                        180) for the roles to be created/dropped on every
                        cluster once merged and synced; then the password
-                       statements db by db.
+                       statements cluster by cluster.
 
-Table and sequence grants to a db file's ignored_grantees are left out of both
+Table and sequence grants to a cluster file's ignored_grantees are left out of both
 commands; their schema, database and default privileges are still managed.
 
 Classification (live cluster object + names in the password store):
@@ -85,9 +85,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Manage CNPG human users and app grants")
     commands = parser.add_subparsers(dest="command", required=True)
 
-    imp = commands.add_parser("import", help="explore live users/roles/grants for a database")
-    imp.add_argument("db", help="database name (e.g. cloudnative-pg.my-app.prod) or its dbs/ file path")
-    imp.add_argument("--write", action="store_true", help="update humans/apps/grants in the db file")
+    imp = commands.add_parser("import", help="explore live users/roles/grants for a cluster")
+    imp.add_argument("db", metavar="cluster", help="cluster name (e.g. cloudnative-pg.my-app.prod) or its clusters/ file path")
+    imp.add_argument("--write", action="store_true", help="update humans/apps/grants in the cluster file")
     imp.add_argument("--prune", action="store_true",
                      help="humans exactly as live: drop pending grants/revokes not applied yet")
 
@@ -95,9 +95,9 @@ def main() -> None:
         "sync-grants",
         help="print SQL to sync live grants with config; --apply runs it; exit 3 on drift",
     )
-    sync.add_argument("db", nargs="*", help="database names or dbs/ file paths (default: every dbs/*.yaml)")
+    sync.add_argument("db", nargs="*", metavar="cluster", help="cluster names or clusters/ file paths (default: every clusters/*.yaml)")
     sync.add_argument("--parallel", type=positive_int, default=MAX_WORKERS, metavar="N",
-                      help=f"how many dbs to read at once (default: {MAX_WORKERS})")
+                      help=f"how many clusters to read at once (default: {MAX_WORKERS})")
     sync.add_argument("--apply", action="store_true", help="run the SQL (asks for confirmation first)")
     sync.add_argument("--yes", action="store_true", help="with --apply: don't ask")
 
@@ -105,40 +105,40 @@ def main() -> None:
         "sync-users",
         help="print the values.yaml diff and ALTER ROLE statements that make users match the config; exit 3 on drift",
     )
-    users.add_argument("db", nargs="*", help="database names or dbs/ file paths (default: every dbs/*.yaml)")
+    users.add_argument("db", nargs="*", metavar="cluster", help="cluster names or clusters/ file paths (default: every clusters/*.yaml)")
     users.add_argument("--parallel", type=positive_int, default=MAX_WORKERS, metavar="N",
-                       help=f"how many dbs to read at once (default: {MAX_WORKERS})")
+                       help=f"how many clusters to read at once (default: {MAX_WORKERS})")
     users.add_argument("--apply", action="store_true",
                        help="open one PR per repo with the values.yaml changes, wait for the roles, then set passwords")
     users.add_argument("--apply-timeout", type=float, default=180, metavar="SECONDS",
                        help="how long to wait for the PR to be merged and synced (default: 180)")
 
     both = commands.add_parser(
-        "sync", help="users and grants for every db at once: report; --apply opens PRs, sets passwords, runs grant SQL",
+        "sync", help="users and grants for every cluster at once: report; --apply opens PRs, sets passwords, runs grant SQL",
     )
-    both.add_argument("db", nargs="*", help="database names or dbs/ file paths (default: every dbs/*.yaml)")
+    both.add_argument("db", nargs="*", metavar="cluster", help="cluster names or clusters/ file paths (default: every clusters/*.yaml)")
     both.add_argument("--parallel", type=positive_int, default=MAX_WORKERS, metavar="N",
-                      help=f"how many dbs to read at once (default: {MAX_WORKERS})")
+                      help=f"how many clusters to read at once (default: {MAX_WORKERS})")
     both.add_argument("--apply", action="store_true",
                       help="users first (PR per GitOps repo, wait for the merge, passwords), then grants (asks first)")
     both.add_argument("--apply-timeout", type=float, default=180, metavar="SECONDS",
                       help="how long to wait for the PRs to be merged and synced (default: 180)")
     both.add_argument("--yes", action="store_true", help="with --apply: don't ask before running grant SQL")
 
-    user = commands.add_parser("user", help="grant/revoke/offboard humans in the db files (config only; apply with sync-users)")
+    user = commands.add_parser("user", help="grant/revoke/offboard humans in the cluster files (config only; apply with sync-users)")
     user_cmds = user.add_subparsers(dest="action", required=True)
-    g = user_cmds.add_parser("grant", help="make NAME a human in these db files")
+    g = user_cmds.add_parser("grant", help="make NAME a human in these cluster files")
     g.add_argument("name")
-    g.add_argument("db", nargs="+", help="database names or dbs/ file paths")
+    g.add_argument("db", nargs="+", metavar="cluster", help="cluster names or clusters/ file paths")
     g.add_argument("--role", action="append", metavar="ROLE",
                    help="role to be a member of, repeatable (default: pg_read_all_data; none with --superuser)")
     g.add_argument("--superuser", action="store_true")
-    r = user_cmds.add_parser("revoke", help="mark NAME ensure: absent in these db files and drop its grants")
+    r = user_cmds.add_parser("revoke", help="mark NAME ensure: absent in these cluster files and drop its grants")
     r.add_argument("name")
-    r.add_argument("db", nargs="+", help="database names or dbs/ file paths")
-    o = user_cmds.add_parser("offboard", help="revoke NAME in every db file it's in")
+    r.add_argument("db", nargs="+", metavar="cluster", help="cluster names or clusters/ file paths")
+    o = user_cmds.add_parser("offboard", help="revoke NAME in every cluster file it's in")
     o.add_argument("name")
-    ls = user_cmds.add_parser("list", help="humans across all db files")
+    ls = user_cmds.add_parser("list", help="humans across all cluster files")
     ls.add_argument("name", nargs="?")
 
     args = parser.parse_args()

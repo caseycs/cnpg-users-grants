@@ -1,7 +1,7 @@
-"""sync-users: what makes a cluster's users match humans:/apps: in the db file
+"""sync-users: what makes a cluster's users match humans:/apps: in the cluster file
 - the values.yaml (CNPG roles: list) change in its GitHub repo, and
 - ALTER ROLE statements for humans whose password differs from the store.
-With --apply, after every db was read: one PR per repo with all its
+With --apply, after every cluster was read: one PR per repo with all its
 values.yaml changes, wait for the roles to appear/go once merged and synced,
 then set the passwords."""
 
@@ -81,7 +81,7 @@ PR_BRANCH = "cnpg-users/sync"
 
 
 def pr_body(plans: list[UsersPlan]) -> str:
-    lines = ["Sync CNPG roles with the db files in cnpg-users-grants (`dbs/`):", ""]
+    lines = ["Sync CNPG roles with the cluster files in cnpg-users-grants (`clusters/`):", ""]
     for p in plans:
         lines.append(f"**{p.db.name}** (`{p.db.values_file}`)")
         lines += [f"- {s}" for s in p.change.summary]
@@ -175,7 +175,7 @@ def users_body(db: DbConfig, store: PasswordStore, apply: bool = False) -> tuple
 
 
 def apply_all(plans: list[UsersPlan], store: PasswordStore, timeout: float = 180) -> bool:
-    """Apply phase, after every db was read: one PR per repo with all its
+    """Apply phase, after every cluster was read: one PR per repo with all its
     values.yaml changes, one wait for every affected cluster, then passwords
     db by db. True if anything still differs."""
     pending = [p for p in plans if p.values_pending]

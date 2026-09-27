@@ -1,7 +1,7 @@
-"""Run a command for several db files: read in parallel, print in order.
+"""Run a command for several cluster files: read in parallel, print in order.
 
 Each db's report is written to its own buffer by a worker thread and printed
-as soon as it and every db before it are done, so output never interleaves.
+as soon as it and every cluster before it are done, so output never interleaves.
 An optional `after` step runs once in the main thread when every report is
 printed, with the payloads of the dbs that read fine (sync-users --apply).
 Ctrl+C cancels the dbs not started yet and re-raises KeyboardInterrupt;
@@ -60,7 +60,7 @@ def run_in_order(
     `after`, its result replaces the drift of the dbs it got payloads for."""
     reports: list[Report] = []
     workers = max(1, min(max_workers, len(items)))
-    print(f"Reading {len(items)} db file(s), {workers} at a time...", file=sys.stderr, flush=True)
+    print(f"Reading {len(items)} cluster file(s), {workers} at a time...", file=sys.stderr, flush=True)
     pool = ThreadPoolExecutor(max_workers=workers)
     try:
         futures = [pool.submit(collect, work, item) for item in items]

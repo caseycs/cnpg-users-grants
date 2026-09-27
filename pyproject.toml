@@ -3,6 +3,8 @@ name = "cnpg-users-grants"
 version = "0.2.0"
 description = "Keep CloudNativePG users and grants in YAML, and see what drifted"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = ["ruamel.yaml", "pygments", "kubernetes", "boto3"]
 

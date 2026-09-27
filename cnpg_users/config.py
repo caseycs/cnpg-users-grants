@@ -1,6 +1,6 @@
-"""Files in the directory the tool is run from: dbs/<db>.yaml (one per
-database) and user_passwords_store.yaml (where human passwords live).
-A db given as a .yaml path is also looked up relative to that directory."""
+"""Files in the directory the tool is run from: clusters/<cluster>.yaml (one
+per CNPG cluster) and user_passwords_store.yaml (where human passwords live).
+A cluster given as a .yaml path is also looked up relative to that directory."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ class DbConfig:
     namespace: str
     cluster: str
     path: Path
-    doc: dict                  # round-trip yaml document of dbs/<db>.yaml, edited by import
+    doc: dict                  # round-trip yaml document of clusters/<cluster>.yaml, edited by import
     online: bool = True
     repo: str | None = None         # GitHub repo holding the ArgoCD values.yaml
     values_file: str | None = None  # path of values.yaml (CNPG roles list) in repo
@@ -40,25 +40,28 @@ class DbConfig:
 
     @property
     def header(self) -> str:
-        """First line of every per-db report."""
+        """First line of every per-cluster report."""
         return f"{self.name} (cluster {self.cluster} in ns {self.namespace})"
 
 
+CLUSTERS_DIR = "clusters"
+
+
 def list_db_names(root: Path) -> list[str]:
-    return sorted(p.stem for p in (root / "dbs").glob("*.yaml"))
+    return sorted(p.stem for p in (root / CLUSTERS_DIR).glob("*.yaml"))
 
 
 def resolve_db_path(root: Path, name: str) -> Path:
     if name.endswith(".yaml"):
         candidates = [Path(name), root / name]
         return next((p for p in candidates if p.is_file()), candidates[0])
-    return root / "dbs" / f"{name}.yaml"
+    return root / CLUSTERS_DIR / f"{name}.yaml"
 
 
 def load_db_config(root: Path, name: str) -> DbConfig:
     db_path = resolve_db_path(root, name)
     if not db_path.is_file():
-        sys.exit(f"database '{db_path.stem}' not found: {db_path} missing")
+        sys.exit(f"cluster '{db_path.stem}' not found: {db_path} missing")
     doc = YAML(typ="rt").load(db_path)
     missing = [k for k in ("context", "namespace", "cluster") if k not in doc]
     if missing:

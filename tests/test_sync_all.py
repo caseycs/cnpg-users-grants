@@ -38,7 +38,7 @@ def test_both_parts_under_one_header(monkeypatch):
 def test_db_without_values_file_still_checks_grants(monkeypatch):
     drift, plan, out, calls = run(monkeypatch, grants=("  Database: app\n", True), repo=None)
     assert calls == [("grants", None)] and plan.users is None and drift
-    assert "users: skipped (no repo/values_file in the db file)" in out
+    assert "users: skipped (no repo/values_file in the cluster file)" in out
 
 
 def test_offline(monkeypatch):

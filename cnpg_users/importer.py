@@ -1,4 +1,4 @@
-"""import: classify live roles, capture live grants, update dbs/<db>.yaml."""
+"""import: classify live roles, capture live grants, update clusters/<cluster>.yaml."""
 
 from __future__ import annotations
 
@@ -84,7 +84,7 @@ def classify_roles(
 def merge_humans(
     config: list[dict], live: list[dict], live_roles: set[str], prune: bool = False
 ) -> tuple[list[dict], list[str]]:
-    """humans: for the db file. With prune, exactly the live humans. Otherwise
+    """humans: for the cluster file. With prune, exactly the live humans. Otherwise
     edits not applied yet survive: a human in the file but not live yet is
     kept (pending create), config wins over live for superuser/roles, and an
     ensure: absent entry stays until its role is gone. Live humans missing

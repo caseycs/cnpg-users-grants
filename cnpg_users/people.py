@@ -1,5 +1,5 @@
 """user grant / revoke / offboard / list: edit humans: (and grants:) in the
-db files. Config only; `sync-users --apply` and `sync-grants` apply it."""
+cluster files. Config only; `sync-users --apply` and `sync-grants` apply it."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ def revoke(db: DbConfig, name: str) -> list[str]:
     humans = _humans(db.doc)
     entry = next((h for h in humans if h.get("name") == name), None)
     if entry is None:
-        notes.append(f"{name} is not a human in this db file")
+        notes.append(f"{name} is not a human in this cluster file")
     elif entry.get("ensure") != "absent":
         humans[humans.index(entry)] = CommentedMap(name=name, ensure="absent")
     grants = db.doc.get("grants") or {}
@@ -70,7 +70,7 @@ def revoke(db: DbConfig, name: str) -> list[str]:
 
 
 def involves(db: DbConfig, name: str) -> bool:
-    """Whether `name` still has anything in this db file to revoke."""
+    """Whether `name` still has anything in this cluster file to revoke."""
     present = any(h["name"] == name for h in db.present_humans)
     has_grants = any(name in (per_user or {}) for per_user in (db.doc.get("grants") or {}).values())
     return present or has_grants
@@ -88,7 +88,7 @@ def save(db: DbConfig, before: str, before_keys: set[str]) -> bool:
 
 
 def edit(dbs: list[DbConfig], change) -> int:
-    """Apply change(db) -> notes to each db file, print diffs, write them."""
+    """Apply change(db) -> notes to each cluster file, print diffs, write them."""
     changed = 0
     for db in dbs:
         before, keys = dump_doc(db.doc), set(db.doc)
@@ -97,7 +97,7 @@ def edit(dbs: list[DbConfig], change) -> int:
         for n in notes:
             print(f"  note: {n}")
     if changed:
-        print(f"\n{changed} db file(s) changed. Apply with: cnpg-users sync-users --apply "
+        print(f"\n{changed} cluster file(s) changed. Apply with: cnpg-users sync-users --apply "
               f"(and sync-grants for grant changes)")
     return 0
 
@@ -114,10 +114,10 @@ def cmd_user(args, root: Path) -> int:
         return edit(dbs, lambda db: grant(db, args.name, roles, args.superuser))
     if args.action == "revoke":
         dbs = [load_db_config(root, d) for d in args.db]
-    else:  # offboard: every db file the user is still in
+    else:  # offboard: every cluster file the user is still in
         dbs = [db for db in (load_db_config(root, d) for d in list_db_names(root)) if involves(db, args.name)]
         if not dbs:
-            print(f"{args.name} is in no db file (or already marked ensure: absent everywhere)")
+            print(f"{args.name} is in no cluster file (or already marked ensure: absent everywhere)")
             return 0
     return edit(dbs, lambda db: revoke(db, args.name))
 

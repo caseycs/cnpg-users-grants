@@ -31,9 +31,9 @@ grants:
 
 @pytest.fixture
 def root(tmp_path: Path) -> Path:
-    (tmp_path / "dbs").mkdir()
-    (tmp_path / "dbs" / "one.yaml").write_text(DB)
-    (tmp_path / "dbs" / "two.yaml").write_text(DB.replace("pg\n", "pg2\n"))
+    (tmp_path / "clusters").mkdir()
+    (tmp_path / "clusters" / "one.yaml").write_text(DB)
+    (tmp_path / "clusters" / "two.yaml").write_text(DB.replace("pg\n", "pg2\n"))
     return tmp_path
 
 
@@ -67,7 +67,7 @@ def test_grant_explicit_roles_and_superuser(root):
 def test_grant_is_idempotent(root, capsys):
     user(root, "grant", "alice", ["one"])
     assert "one: no changes" in capsys.readouterr().out
-    assert (root / "dbs" / "one.yaml").read_text() == DB
+    assert (root / "clusters" / "one.yaml").read_text() == DB
 
 
 def test_grant_refuses_apps_and_bad_names(root):
@@ -91,7 +91,7 @@ def test_offboard_everywhere_then_nothing_left(root, capsys):
         assert humans(root, db) == [{"name": "alice", "ensure": "absent"}]
     capsys.readouterr()
     user(root, "offboard", "alice")
-    assert "in no db file" in capsys.readouterr().out
+    assert "in no cluster file" in capsys.readouterr().out
 
 
 def test_list(root, capsys):

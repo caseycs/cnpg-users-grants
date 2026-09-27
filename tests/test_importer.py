@@ -23,8 +23,8 @@ apps:
 
 
 def write_config(tmp_path: Path, db_yaml: str = DB_YAML):
-    (tmp_path / "dbs").mkdir()
-    (tmp_path / "dbs" / "pg.ns.env.yaml").write_text(db_yaml)
+    (tmp_path / "clusters").mkdir()
+    (tmp_path / "clusters" / "pg.ns.env.yaml").write_text(db_yaml)
     return load_db_config(tmp_path, "pg.ns.env")
 
 
@@ -50,8 +50,8 @@ def test_load_db_config(tmp_path):
 
 def test_list_db_names(tmp_path):
     write_config(tmp_path)
-    (tmp_path / "dbs" / "a.yaml").write_text(DB_YAML)
-    (tmp_path / "dbs" / "notes.txt").write_text("")
+    (tmp_path / "clusters" / "a.yaml").write_text(DB_YAML)
+    (tmp_path / "clusters" / "notes.txt").write_text("")
     assert list_db_names(tmp_path) == ["a", "pg.ns.env"]
 
 

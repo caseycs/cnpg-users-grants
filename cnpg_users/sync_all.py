@@ -1,5 +1,5 @@
-"""sync: users and grants for every db at once. The read phase reports both
-parts per db; --apply runs the users flow first (PR per GitOps repo, wait
+"""sync: users and grants for every cluster at once. The read phase reports both
+parts per cluster; --apply runs the users flow first (PR per GitOps repo, wait
 for the merge, passwords), since grants may name roles that only exist
 after it, then applies grants after one confirmation."""
 
@@ -23,7 +23,7 @@ class SyncPlan:
 
 def cmd_sync(db: DbConfig, store: PasswordStore, apply: bool = False,
              out: TextIO = sys.stdout) -> tuple[bool, SyncPlan | None]:
-    """One report per db: what differs in users and in grants, or one line."""
+    """One report per cluster: what differs in users and in grants, or one line."""
     if not db.online:
         print(f"{db.header}: offline — skipped", file=out)
         return False, None
@@ -33,7 +33,7 @@ def cmd_sync(db: DbConfig, store: PasswordStore, apply: bool = False,
         parts.append(body)
         drift |= users_drift
     else:
-        parts.append("  users: skipped (no repo/values_file in the db file)\n")
+        parts.append("  users: skipped (no repo/values_file in the cluster file)\n")
     body, grants_drift, grants = grants_body(db, users.cluster if users else None)
     parts.append(body)
     drift |= grants_drift
