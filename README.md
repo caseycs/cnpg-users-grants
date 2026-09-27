@@ -1,31 +1,72 @@
 # cnpg-users-grants
 
-Manage human PostgreSQL users across many [CloudNativePG](https://cloudnative-pg.io) clusters from one place, with one password per person everywhere.
+For many [CloudNativePG](https://cloudnative-pg.io) clusters deployed by GitOps (ArgoCD, FluxCD, …), managed from one directory of YAML files:
 
-## Scope
+- **Human users.** Grant, revoke and offboard people on every cluster in one place, with one password per person everywhere (AWS SSM, GCP Secret Manager or sops). Role changes arrive as PRs to your GitOps repos and take effect once a person merges them. App roles are listed for reference and never touched.
+- **Grants.** Every role's grants, apps included, as reviewable code. Migrations and one-off SQL set most of them; `sync` shows where a database drifts from the file (non-zero exit, so it fits CI) and the exact `GRANT`/`REVOKE` to fix it.
 
-Several CNPG clusters, each deployed by GitOps (ArgoCD, FluxCD, …) from a values file in a GitHub repo that holds the cluster's [managed roles](https://cloudnative-pg.io/documentation/current/declarative_role_management/) list.
+Nothing changes a database or repo unless you pass `--apply`.
 
-User management is for **human users only**: people who log in with their own password. Application roles are listed by name for reference and never changed: their values-file entries, passwords (k8s secrets) and memberships stay with whoever runs the app. A role that is neither a listed human nor an app is reported as a warning, never touched.
+## Workflow
 
-Grants are the exception: `sync-grants` covers every role's table, schema and database grants, apps included, so drift in what an app can access shows up too.
+```mermaid
+flowchart TB
+  classDef person fill:#fff3bf,stroke:#b08900,color:#000
+  classDef tool fill:#e7f0ff,stroke:#2f5fb3,color:#000
+  classDef ext fill:#e6f5e6,stroke:#2e7d32,color:#000
+  classDef stage fill:#fafafa,stroke:#999,color:#333
 
-## The problem
+  subgraph legend["who"]
+    direction LR
+    l1["you"]:::person ~~~ l2["cnpg-users"]:::tool ~~~ l3["GitOps / CNPG"]:::ext
+  end
 
-Every cluster has its own roles list in its own repo. Giving someone access, or taking it away, means editing several files in several repos, and each cluster ends up with a different password for the same person. Grants live in one-off SQL scripts, so after a while nobody can say who has access where, or why a worker suddenly gets `permission denied`.
+  subgraph s1["1 · once · from live clusters"]
+    direction LR
+    import["<b>import --write</b><br/>→ dbs/*.yaml"]:::tool
+  end
 
-## What it does
+  subgraph s2["2 · change · you (grants also by hand)"]
+    direction LR
+    edit["<b>user grant</b><br/><b>user revoke</b><br/><b>user offboard</b>"]:::person --> commit["review + commit<br/>dbs/*.yaml"]:::person
+  end
 
-- **One place for human users**: every cluster's humans are in one directory of YAML files. `user grant` / `revoke` / `offboard` edit them; `sync-users --apply` turns that into one PR per GitOps repo and waits until the roles are created or dropped.
-- **One password per person**: each human's password lives once in a secret store (AWS SSM, GCP Secret Manager or a sops-encrypted file), and is set on every cluster they're in, as a SCRAM verifier, never plaintext.
-- **Grants as code**: a snapshot of each database's grants, and the exact `GRANT`/`REVOKE` SQL that makes a cluster match it. It exits non-zero on drift, so it works in CI.
+  subgraph s3["3 · check · you or CI"]
+    direction LR
+    sync["<b>sync</b>: diff per db<br/>exit 3 on drift"]:::tool
+  end
 
-Nothing changes a database or repo unless you ask: without `--apply` both `sync-*` commands only print what they would do. `sync-grants --apply` runs the SQL after a confirmation; `sync-users --apply` opens PRs and sets passwords.
+  subgraph s4["4 · apply · sync --apply"]
+    direction TB
+    subgraph u["4a · users"]
+      direction LR
+      q{"roles list<br/>changed?"}:::tool
+      q -- yes --> pr["PR per<br/>GitOps repo"]:::tool --> merge["review + merge"]:::person --> cnpg["GitOps syncs<br/>CNPG sets roles"]:::ext --> pw["set passwords<br/>from the store"]:::tool
+      q -- no --> pw
+    end
+    subgraph g["4b · grants"]
+      direction LR
+      ok["confirm once"]:::person --> sql["GRANT / REVOKE"]:::tool
+    end
+    u --> g
+  end
+
+  subgraph s5["5 · later · apps change grants → drift"]
+    direction LR
+    again["run <b>sync</b> again<br/>(back to step 3)"]:::ext
+  end
+
+  s1 --> s2 --> s3 --> s4 -.-> s5
+  class s1,s2,s3,s4,s5,u,g,legend stage
+```
+
+`sync --apply` only opens a PR when a cluster's roles list actually has to change; otherwise it goes straight to passwords and grants.
 
 ## Quick start
 
 Requires [uv](https://docs.astral.sh/uv/), a kubeconfig with access to the clusters, `gh` logged in (for `sync-users`) and access to your password store (AWS, GCP or sops keys).
 
+<!-- x-release-please-start-version -->
 ```sh
 mkdir cnpg-users-grants && cd cnpg-users-grants   # configs live in the directory you run from
 cat > user_passwords_store.yaml <<'EOF'
@@ -44,21 +85,16 @@ values_roles_path: roles           # where the CNPG roles list is in values_file
 EOF
 
 # fill humans/apps/grants from the live cluster
-uvx --from git+https://github.com/caseycs/cnpg-users-grants cnpg-users import cloudnative-pg.my-app.prod --write
-# anything drifted?
-uvx --from git+https://github.com/caseycs/cnpg-users-grants cnpg-users sync-grants
+uvx --from git+https://github.com/caseycs/cnpg-users-grants@v0.2.0 cnpg-users import cloudnative-pg.my-app.prod --write
+# what differs, users and grants?
+uvx --from git+https://github.com/caseycs/cnpg-users-grants@v0.2.0 cnpg-users sync
 ```
+<!-- x-release-please-end -->
 
 `values_roles_path` is the dotted path to the list of [CNPG managed roles](https://cloudnative-pg.io/documentation/current/declarative_role_management/) inside `values_file`: `roles` when it's at the top level, `cluster.roles` when your chart nests it under `cluster:`. `sync-users` edits that list.
 
-`uvx` fetches and caches the tool on first use; add `@<tag or commit>` to the URL to pin a version, or `uv tool install git+https://github.com/caseycs/cnpg-users-grants` to keep `cnpg-users` on your PATH.
-
-To pin a release rather than track `main`:
-
 <!-- x-release-please-start-version -->
-```sh
-uvx --from git+https://github.com/caseycs/cnpg-users-grants@v0.1.0 cnpg-users sync-grants
-```
+`uvx` fetches and caches the tool on first use. The examples pin the latest release (`@v0.2.0`); drop the `@…` to track `main`, or `uv tool install git+https://github.com/caseycs/cnpg-users-grants@v0.2.0` to keep `cnpg-users` on your PATH.
 <!-- x-release-please-end -->
 
 ## Commands
@@ -70,7 +106,7 @@ uvx --from git+https://github.com/caseycs/cnpg-users-grants@v0.1.0 cnpg-users sy
 | `sync-grants [<db>…]` | Print the SQL that makes live grants match the file. |
 | `sync-grants --apply [--yes]` | Run it: asks first (`--yes` skips, e.g. in CI), one transaction per database, then re-checks. |
 | `sync-users [<db>…]` | Print the values.yaml change and password statements for humans. |
-| `sync-users --apply` | Open one PR per repo, wait for it to be merged and synced, then set passwords. |
+| `sync-users --apply` | Open one PR per GitOps repo, wait for a person to merge it and GitOps to sync it, then set passwords. |
 | `user grant <name> <db>… [--role R]… [--superuser]` | Add or update a human in these db files (default role `pg_read_all_data`). |
 | `user revoke <name> <db>…` | Mark the human `ensure: absent` there and drop their `grants:`. |
 | `user offboard <name>` | `revoke` in every db file they're in. |
@@ -93,6 +129,8 @@ cnpg-users sync-users                                            #    shows what
 cnpg-users sync-users --apply                                    # 2. PR marks her role ensure: absent in values.yaml
 cnpg-users sync-grants --apply                                   #    REVOKE the grants she still holds
 ```
+
+**Role changes go through GitOps, never straight to the cluster.** `sync-users --apply` doesn't create or drop roles itself: it commits the values.yaml changes to a branch in each GitOps repo and opens one PR per repo, labeled `cnpg-users-grants` (an open PR with that label is updated instead of opening another). Someone reviews and merges it; ArgoCD or Flux syncs the new roles list, and CNPG creates or drops the roles. The tool waits meanwhile, checking the clusters every 10 seconds for up to `--apply-timeout` (default 180 s), and sets passwords only once the roles exist. If nobody merges in time, it stops without setting them; run it again after the merge.
 
 CNPG can't drop a role that still owns objects or holds privileges. `sync-users` lists those per database with the `REASSIGN OWNED … DROP OWNED …` to run first. Roles are cluster-wide: granting a human in a db file gives them access on every database of that cluster. Passwords are generated in the store on first `--apply` if missing, and aren't deleted on offboarding.
 
@@ -143,7 +181,10 @@ type: sops                         # one encrypted file: {role: password}; any s
 sops_file: passwords.sops.yaml     # relative to the current directory
 ```
 
-GCP needs the `gcp` extra: `uvx --from 'cnpg-users-grants[gcp] @ git+https://github.com/caseycs/cnpg-users-grants' cnpg-users …`. The sops store needs `sops` on the PATH; new passwords are written with `sops set --value-stdin`, so they never appear in process listings.
+<!-- x-release-please-start-version -->
+GCP needs the `gcp` extra: `uvx --from 'cnpg-users-grants[gcp] @ git+https://github.com/caseycs/cnpg-users-grants@v0.2.0' cnpg-users …`.
+<!-- x-release-please-end -->
+ The sops store needs `sops` on the PATH; new passwords are written with `sops set --value-stdin`, so they never appear in process listings.
 
 ## How grants are written
 
