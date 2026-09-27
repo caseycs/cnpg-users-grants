@@ -6,33 +6,18 @@ in-process against it; only GitHub (values.yaml) and AWS SSM are faked."""
 
 from __future__ import annotations
 
-import base64
 import io
-import os
-import time
-import uuid
 
 import pytest
-from kubernetes import client as k8s_client
-from kubernetes import config as k8s_config
 from kubernetes.stream import stream as k8s_stream
-from ruamel.yaml import YAML
 
 from cnpg_users import importer, users
-from cnpg_users.cluster import Cluster
-from types import SimpleNamespace
-
-from cnpg_users.config import load_db_config
 from cnpg_users.github import RepoFile
 from cnpg_users.passwords import password_matches
-from cnpg_users.sync import apply_grants, cmd_sync_grants
+from cnpg_users.sync import apply_grants
+from helpers import DATABASE, cnpg_cluster, db, fake_store, grants_of, sync
 
 pytestmark = pytest.mark.integration
-
-CONTEXT = os.environ.get("CNPG_IT_CONTEXT")
-KEEP = os.environ.get("CNPG_IT_KEEP")  # keep the namespace for debugging
-CLUSTER = "pg"
-DATABASE = "app"  # CNPG's default initdb database
 
 SETUP_SQL = """
 CREATE SCHEMA reports;
@@ -68,88 +53,16 @@ roles:
 """
 
 
-def wait(what: str, check, timeout: float = 600, every: float = 3):
-    deadline = time.monotonic() + timeout
-    while True:
-        result = check()
-        if result:
-            return result
-        if time.monotonic() > deadline:
-            pytest.fail(f"timed out after {timeout:.0f}s waiting for {what}")
-        time.sleep(every)
-
-
 @pytest.fixture(scope="module")
 def env(tmp_path_factory):
-    if not CONTEXT:
-        pytest.skip("set CNPG_IT_CONTEXT (task test:integration does)")
-    api = k8s_config.new_client_from_config(context=CONTEXT)
-    core, custom = k8s_client.CoreV1Api(api), k8s_client.CustomObjectsApi(api)
-    ns = f"cnpg-users-it-{uuid.uuid4().hex[:6]}"
-    core.create_namespace({"metadata": {"name": ns}})
-    try:
-        core.create_namespaced_secret(ns, {
-            "metadata": {"name": "webapp-secret"}, "type": "kubernetes.io/basic-auth",
-            "data": {"username": base64.b64encode(b"webapp").decode(), "password": base64.b64encode(b"app-pw").decode()},
-        })
-        custom.create_namespaced_custom_object("postgresql.cnpg.io", "v1", ns, "clusters", {
-            "apiVersion": "postgresql.cnpg.io/v1", "kind": "Cluster", "metadata": {"name": CLUSTER},
-            "spec": {
-                "instances": 1,
-                "storage": {"size": "1Gi"},
-                "managed": {"roles": [
-                    {"name": "webapp", "ensure": "present", "login": True, "superuser": False,
-                     "passwordSecret": {"name": "webapp-secret"}},
-                    {"name": "alice", "ensure": "present", "login": True, "superuser": False,
-                     "inRoles": ["pg_read_all_data"]},
-                ]},
-            },
-        })
-
-        def ready():
-            status = custom.get_namespaced_custom_object(
-                "postgresql.cnpg.io", "v1", ns, "clusters", CLUSTER).get("status") or {}
-            return status.get("readyInstances") == 1 and status.get("currentPrimary")
-        wait("the CNPG cluster to be ready", ready)
-
-        root = tmp_path_factory.mktemp("config")
-        (root / "dbs").mkdir()
-        (root / "dbs" / "pg.it.kind.yaml").write_text(
-            f"context: {CONTEXT}\nnamespace: {ns}\ncluster: {CLUSTER}\n"
-            f"repo: example/gitops\nvalues_file: it/values.yaml\n"
-        )
-        cluster = Cluster(load_db_config(root, "pg.it.kind"))
-        wait("managed roles", lambda: cluster.existing_roles(["webapp", "alice"]) == {"webapp", "alice"}, every=2)
-        cluster.psql(SETUP_SQL, database=DATABASE)
-        yield {"root": root, "ns": ns, "core": core, "cluster": cluster}
-    finally:
-        if not KEEP:
-            core.delete_namespace(ns)
-
-
-def fake_store(passwords: dict[str, str]):
-    """A password store in memory (the real ones are covered by test_stores.py)."""
-    return SimpleNamespace(
-        description="fake store",
-        names=lambda: set(passwords),
-        passwords=lambda names: {n: passwords[n] for n in names if n in passwords},
-        create=lambda name, password: passwords.__setitem__(name, password) or f"fake[{name}]",
-    )
-
-
-def db(env):
-    return load_db_config(env["root"], "pg.it.kind")
-
-
-def grants_of(env, grantee):
-    doc = YAML(typ="safe").load(db(env).path)
-    return doc["grants"][DATABASE][grantee]
-
-
-def sync(env):
-    out = io.StringIO()
-    drift, plan = cmd_sync_grants(db(env), out=out)
-    return drift, plan, out.getvalue()
+    roles = [
+        {"name": "webapp", "ensure": "present", "login": True, "superuser": False,
+         "passwordSecret": {"name": "webapp-secret"}},
+        {"name": "alice", "ensure": "present", "login": True, "superuser": False, "inRoles": ["pg_read_all_data"]},
+    ]
+    with cnpg_cluster(tmp_path_factory.mktemp("config"), roles, {"webapp-secret": ("webapp", "app-pw")}) as env:
+        env["cluster"].psql(SETUP_SQL, database=DATABASE)
+        yield env
 
 
 def test_import_classifies_roles_and_collapses_grants(env, monkeypatch):
