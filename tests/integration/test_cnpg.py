@@ -117,7 +117,7 @@ def test_new_partition_gets_the_parents_grants(env):
 
 
 def test_human_password_is_set_as_a_verifier_and_works(env, monkeypatch):
-    monkeypatch.setattr(users, "get_file", lambda repo, path: RepoFile(VALUES_YAML, "sha"))
+    monkeypatch.setattr(users, "get_file", lambda db, path: RepoFile(VALUES_YAML, "sha"))
     store = fake_store({"alice": "alice-pw-1"})
     out = io.StringIO()
     drift, plan = users.plan_users(db(env), store, out=out)
@@ -140,7 +140,7 @@ def test_human_password_is_set_as_a_verifier_and_works(env, monkeypatch):
 
 
 def test_values_diff_marks_revoked_human_absent(env, monkeypatch):
-    monkeypatch.setattr(users, "get_file", lambda repo, path: RepoFile(VALUES_YAML, "sha"))
+    monkeypatch.setattr(users, "get_file", lambda db, path: RepoFile(VALUES_YAML, "sha"))
 
     path = db(env).path
     path.write_text(path.read_text().replace(
@@ -164,7 +164,7 @@ def test_drop_blockers_are_reported(env):
 
 def test_sync_reports_users_and_grants_together(env, monkeypatch):
     from cnpg_users.sync_all import cmd_sync
-    monkeypatch.setattr(users, "get_file", lambda repo, path: RepoFile(VALUES_YAML, "sha"))
+    monkeypatch.setattr(users, "get_file", lambda db, path: RepoFile(VALUES_YAML, "sha"))
     out = io.StringIO()
     drift, plan = cmd_sync(db(env), fake_store({}), out=out)
     text = out.getvalue()

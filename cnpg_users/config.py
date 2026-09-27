@@ -11,6 +11,8 @@ from pathlib import Path
 
 from ruamel.yaml import YAML
 
+from .repos import PROVIDERS
+
 
 @dataclass
 class DbConfig:
@@ -21,7 +23,9 @@ class DbConfig:
     path: Path
     doc: dict                  # round-trip yaml document of clusters/<cluster>.yaml, edited by import
     online: bool = True
-    repo: str | None = None         # GitHub repo holding the ArgoCD values.yaml
+    repo: str | None = None         # GitHub owner/repo or GitLab group/project holding the values.yaml
+    repo_provider: str = "github"   # github (gh) or gitlab (glab)
+    gitlab_host: str | None = None  # self-managed GitLab host; default: glab's
     values_file: str | None = None  # path of values.yaml (CNPG roles list) in repo
     values_roles_path: str = "roles"  # dotted path of the roles list in values_file, e.g. cluster.roles
     humans: list[dict] = field(default_factory=list)  # name, superuser, roles; ensure: absent = being removed
@@ -69,6 +73,9 @@ def load_db_config(root: Path, name: str) -> DbConfig:
     online = doc.get("online", True)
     if not isinstance(online, bool):
         sys.exit(f"{db_path}: 'online' must be true or false (got {online!r})")
+    provider = str(doc.get("repo_provider") or "github")
+    if provider not in PROVIDERS:
+        sys.exit(f"{db_path}: repo_provider must be one of {', '.join(PROVIDERS)} (got {provider!r})")
     return DbConfig(
         name=db_path.stem,
         context=doc["context"],
@@ -78,6 +85,8 @@ def load_db_config(root: Path, name: str) -> DbConfig:
         doc=doc,
         online=online,
         repo=doc.get("repo"),
+        repo_provider=provider,
+        gitlab_host=doc.get("gitlab_host"),
         values_file=doc.get("values_file"),
         values_roles_path=str(doc.get("values_roles_path") or "roles"),
         humans=[dict(h) for h in doc.get("humans") or []],

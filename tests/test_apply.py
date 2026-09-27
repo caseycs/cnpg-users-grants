@@ -169,7 +169,7 @@ def test_apply_all_one_pr_per_repo_then_one_wait(monkeypatch, capsys):
             raise AssertionError("passwords already in sync")
 
     def plan(name, repo, path, changed, humans, absent=()):
-        db = SimpleNamespace(name=name, repo=repo, values_file=path)
+        db = SimpleNamespace(name=name, repo=repo, values_file=path, repo_provider="github", gitlab_host=None)
         change = RolesChange("new" if changed else "old", absent=list(absent))
         return users.UsersPlan(db, FakeCluster(humans), RepoFile("old", f"sha-{name}"), change, list(humans))
 
@@ -179,9 +179,9 @@ def test_apply_all_one_pr_per_repo_then_one_wait(monkeypatch, capsys):
         plan("prod", "o/argocd", "prod/values.yaml", True, ["heidi"]),
     ]
     prs = []
-    monkeypatch.setattr(users, "open_pr", lambda repo, changes, branch, title, body:
-                        prs.append((repo, [c.path for c in changes], branch, title))
-                        or github.PullRequest(f"https://pr/{repo}", "opened"))
+    monkeypatch.setattr(users, "open_pr", lambda db, changes, branch, title, body:
+                        prs.append((db.repo, [c.path for c in changes], branch, title))
+                        or github.PullRequest(f"https://pr/{db.repo}", "opened"))
     store = SimpleNamespace(passwords=lambda names: {n: "pw" for n in names}, description="fake")
     waits = []
     monkeypatch.setattr(users, "wait_for_roles", lambda existing, present, absent, timeout, report:
