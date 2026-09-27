@@ -1,4 +1,4 @@
-"""The CNPG `roles:` list in an ArgoCD values.yaml, made to match a db file."""
+"""The CNPG `roles:` list in an ArgoCD values.yaml, made to match a cluster file."""
 
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ class RolesChange:
     added: list[str] = field(default_factory=list)     # humans appended
     updated: list[str] = field(default_factory=list)   # humans whose entry changed
     absent: list[str] = field(default_factory=list)    # roles newly set ensure: absent
-    unlisted: list[str] = field(default_factory=list)  # roles in values.yaml that aren't in the db file
+    unlisted: list[str] = field(default_factory=list)  # roles in values.yaml that aren't in the cluster file
 
     @property
     def summary(self) -> list[str]:
@@ -80,11 +80,11 @@ def _update_entry(entry, want: dict, keys: tuple[str, ...]) -> bool:
 
 def sync_roles(text: str, humans: list[dict], apps: list[str], roles_path: str = "roles") -> RolesChange:
     """values.yaml text with its CNPG roles list (at dotted `roles_path`,
-    e.g. "roles" or "cluster.roles") matching the db file's humans:
-    - every present human with login/superuser/inRoles as in the db file
+    e.g. "roles" or "cluster.roles") matching the cluster file's humans:
+    - every present human with login/superuser/inRoles as in the cluster file
       (other keys and comments kept; missing humans appended at the end)
     - every human marked ensure: absent gets ensure: absent, so CNPG drops it
-    - apps and roles listed nowhere in the db file are never changed; the
+    - apps and roles listed nowhere in the cluster file are never changed; the
       latter are reported in change.unlisted."""
     yaml = make_write_yaml()
     doc = yaml.load(text)

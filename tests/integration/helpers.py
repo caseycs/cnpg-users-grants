@@ -1,5 +1,5 @@
 """Shared setup for the integration tests: a throwaway namespace with a
-1-instance CNPG Cluster, and the tool pointed at it through a db file."""
+1-instance CNPG Cluster, and the tool pointed at it through a cluster file."""
 
 from __future__ import annotations
 
@@ -67,8 +67,8 @@ def cnpg_cluster(root: Path, managed_roles: list[dict], secrets: dict[str, tuple
             return status.get("readyInstances") == 1 and status.get("currentPrimary")
         wait("the CNPG cluster to be ready", ready)
 
-        (root / "dbs").mkdir()
-        (root / "dbs" / f"{DB_NAME}.yaml").write_text(
+        (root / "clusters").mkdir()
+        (root / "clusters" / f"{DB_NAME}.yaml").write_text(
             f"context: {CONTEXT}\nnamespace: {ns}\ncluster: {CLUSTER}\n"
             f"repo: example/gitops\nvalues_file: it/values.yaml\n{db_file_extra}"
         )

@@ -1,11 +1,26 @@
 # cnpg-users-grants
 
-For many [CloudNativePG](https://cloudnative-pg.io) clusters deployed by GitOps (ArgoCD, FluxCD, …), managed from one directory of YAML files:
+Grants as code for [CloudNativePG](https://cloudnative-pg.io), with drift detection, plus human users managed across many clusters from one directory of YAML files.
 
-- **Human users.** Grant, revoke and offboard people on every cluster in one place, with one password per person everywhere (AWS SSM, GCP Secret Manager or sops). Role changes arrive as PRs to your GitOps repos and take effect once a person merges them. App roles are listed for reference and never touched.
-- **Grants.** Every role's grants, apps included, as reviewable code. Migrations and one-off SQL set most of them; `sync` shows where a database drifts from the file (non-zero exit, so it fits CI) and the exact `GRANT`/`REVOKE` to fix it.
+- **Grants.** Every role's table, schema and database grants, apps included, as reviewable code. `import` snapshots them from the live cluster. `sync` then shows where a database drifted and prints the exact `GRANT`/`REVOKE` to fix it. It exits non-zero on drift, so it fits CI.
+- **Human users.** Grant, revoke and offboard people on every cluster in one place, with one password per person everywhere (AWS SSM, GCP Secret Manager or sops). Role changes arrive as PRs to your GitOps repos (ArgoCD, FluxCD, …) and take effect once someone merges them. App roles are listed for reference and never touched.
 
-Nothing changes a database or repo unless you pass `--apply`.
+Nothing changes a database or repo unless you pass `--apply`. The tool reaches Postgres through `kubectl exec` into the primary pod, so all it needs is a kubeconfig: no network path to the database and no database credentials.
+
+## The problem
+
+CNPG manages roles declaratively ([managed roles](https://cloudnative-pg.io/documentation/current/declarative_role_management/)) and databases through the `Database` CRD, but grants have no declarative home. Migrations, one-off SQL and people with psql set them, and after a while nobody can say who can access what, or why a worker suddenly gets `permission denied` on a table created last week.
+
+Humans have a second problem. Every cluster keeps its roles list in its own values file, often in its own repo. Giving someone access, or taking it away, means editing several files in several repos, and the same person ends up with a different password on every cluster.
+
+## Why not…
+
+- **External Secrets Operator + `passwordSecret`.** Point every cluster's managed role at the same SSM or Secret Manager entry and you get one password per person, fully GitOps. If that's all you need, do that. This tool adds one place that lists who has access where, onboarding and offboarding across every repo in one command, a report of what blocks `DROP ROLE` (owned objects, remaining privileges), and grants.
+- **[ldap2pg](https://github.com/dalibo/ldap2pg).** Mature and declarative for roles and privileges, with privilege profiles you write yourself, and roles optionally from LDAP. This tool starts from what's live: `import` turns the current grants into the shortest exact list of statements and verifies that it expands back to them. It also knows about CNPG (managed roles, `DatabaseRole` CRs, secret-backed apps) and GitOps repos.
+- **Terraform `postgresql` provider / Crossplane provider-sql.** Both need a network connection and credentials for every database, plus state to keep. Here the YAML files are the state, and access goes through kubeconfig.
+- **SSO / OAuth (PG 18), Teleport, Vault dynamic credentials.** Better for human access if you have them. This tool is for teams that give people password logins; its grants half is useful either way.
+
+**Scope.** The users half assumes a GitHub repo (via `gh`) holding each cluster's Helm values file with its CNPG roles list. `sync-grants` needs only kubeconfig access. `import` also reads the password store, to tell humans from apps.
 
 ## Workflow
 
@@ -23,17 +38,17 @@ flowchart TB
 
   subgraph s1["1 · once · from live clusters"]
     direction LR
-    import["<b>import --write</b><br/>→ dbs/*.yaml"]:::tool
+    import["<b>import --write</b><br/>→ clusters/*.yaml"]:::tool
   end
 
   subgraph s2["2 · change · you (grants also by hand)"]
     direction LR
-    edit["<b>user grant</b><br/><b>user revoke</b><br/><b>user offboard</b>"]:::person --> commit["review + commit<br/>dbs/*.yaml"]:::person
+    edit["<b>user grant</b><br/><b>user revoke</b><br/><b>user offboard</b>"]:::person --> commit["review + commit<br/>clusters/*.yaml"]:::person
   end
 
   subgraph s3["3 · check · you or CI"]
     direction LR
-    sync["<b>sync</b>: diff per db<br/>exit 3 on drift"]:::tool
+    sync["<b>sync</b>: diff per cluster<br/>exit 3 on drift"]:::tool
   end
 
   subgraph s4["4 · apply · sync --apply"]
@@ -75,7 +90,7 @@ aws_profile: default
 aws_region: eu-central-1
 aws_ssm_prefix: /cnpg-user/
 EOF
-mkdir dbs && cat > dbs/cloudnative-pg.my-app.prod.yaml <<'EOF'
+mkdir clusters && cat > clusters/cloudnative-pg.my-app.prod.yaml <<'EOF'
 context: my-kube-context
 namespace: my-app
 cluster: cloudnative-pg
@@ -101,22 +116,22 @@ uvx --from git+https://github.com/caseycs/cnpg-users-grants@v0.2.0 cnpg-users sy
 
 | Command | What it does |
 |---|---|
-| `import <db> [--write] [--prune]` | Read roles and grants from the live cluster, show the diff against `dbs/<db>.yaml`; `--write` saves it. |
-| `sync [<db>…] [--apply]` | Both of the below in one run: one report per db with users and grants; `--apply` does the users flow first, then grants (asks first). |
-| `sync-grants [<db>…]` | Print the SQL that makes live grants match the file. |
+| `import <cluster> [--write] [--prune]` | Read roles and grants from the live cluster, show the diff against `clusters/<cluster>.yaml`; `--write` saves it. |
+| `sync [<cluster>…] [--apply]` | Both of the below in one run: one report per cluster with users and grants; `--apply` does the users flow first, then grants (asks first). |
+| `sync-grants [<cluster>…]` | Print the SQL that makes live grants match the file. |
 | `sync-grants --apply [--yes]` | Run it: asks first (`--yes` skips, e.g. in CI), one transaction per database, then re-checks. |
-| `sync-users [<db>…]` | Print the values.yaml change and password statements for humans. |
+| `sync-users [<cluster>…]` | Print the values.yaml change and password statements for humans. |
 | `sync-users --apply` | Open one PR per GitOps repo, wait for a person to merge it and GitOps to sync it, then set passwords. |
-| `user grant <name> <db>… [--role R]… [--superuser]` | Add or update a human in these db files (default role `pg_read_all_data`). |
-| `user revoke <name> <db>…` | Mark the human `ensure: absent` there and drop their `grants:`. |
-| `user offboard <name>` | `revoke` in every db file they're in. |
-| `user list [<name>]` | Who has what, across all db files. |
+| `user grant <name> <cluster>… [--role R]… [--superuser]` | Add or update a human in these cluster files (default role `pg_read_all_data`). |
+| `user revoke <name> <cluster>…` | Mark the human `ensure: absent` there and drop their `grants:`. |
+| `user offboard <name>` | `revoke` in every cluster file they're in. |
+| `user list [<name>]` | Who has what, across all cluster files. |
 
-Without db names, `sync` and `sync-*` run for every file in `dbs/`, `--parallel N` at a time (default 4). Exit codes: `0` in sync, `3` drift, `1` error, `2` usage.
+Without cluster names, `sync` and `sync-*` run for every file in `clusters/`, `--parallel N` at a time (default 4). Exit codes: `0` in sync, `3` drift, `1` error, `2` usage.
 
 ## Granting and offboarding people
 
-Two steps: `user …` only edits the db files (review the diff, commit it); applying is separate and manual.
+Two steps: `user …` only edits the cluster files (review the diff, commit it); applying is separate and manual.
 
 ```sh
 cnpg-users user grant alice cloudnative-pg.my-app.prod          # 1. config
@@ -132,11 +147,11 @@ cnpg-users sync-grants --apply                                   #    REVOKE the
 
 **Role changes go through GitOps, never straight to the cluster.** `sync-users --apply` doesn't create or drop roles itself: it commits the values.yaml changes to a branch in each GitOps repo and opens one PR per repo, labeled `cnpg-users-grants` (an open PR with that label is updated instead of opening another). Someone reviews and merges it; ArgoCD or Flux syncs the new roles list, and CNPG creates or drops the roles. The tool waits meanwhile, checking the clusters every 10 seconds for up to `--apply-timeout` (default 180 s), and sets passwords only once the roles exist. If nobody merges in time, it stops without setting them; run it again after the merge.
 
-CNPG can't drop a role that still owns objects or holds privileges. `sync-users` lists those per database with the `REASSIGN OWNED … DROP OWNED …` to run first. Roles are cluster-wide: granting a human in a db file gives them access on every database of that cluster. Passwords are generated in the store on first `--apply` if missing, and aren't deleted on offboarding.
+CNPG can't drop a role that still owns objects or holds privileges. `sync-users` lists those per database with the `REASSIGN OWNED … DROP OWNED …` to run first. Roles are cluster-wide, so a human in a cluster file can log in to every database of that cluster; `grants:` are per database. Passwords are generated in the store on first `--apply` if missing, and aren't deleted on offboarding.
 
 ## Files
 
-`dbs/<db>.yaml`, one per database:
+`clusters/<cluster>.yaml`, one per CNPG cluster:
 
 ```yaml
 context: my-kube-context           # kubeconfig context
@@ -145,7 +160,7 @@ cluster: cloudnative-pg            # CNPG Cluster name
 repo: my-org/argocd                # where the CNPG values.yaml lives
 values_file: prod/my-app/cloudnative-pg/values.yaml
 values_roles_path: roles           # path to the CNPG roles list in values_file (default: roles)
-online: true                       # false: skip this db
+online: true                       # false: skip this cluster
 ignored_grantees: [pg_monitor]     # skip these roles' table/sequence grants (schema, database and default privileges still managed)
 humans:
   - name: alice
@@ -155,7 +170,7 @@ humans:
     ensure: absent                 # offboarded, role not dropped yet
 apps: [webapp, workers]            # application roles, for reference only: never changed
 grants:
-  app_db:                          # database
+  app_db:                          # database in this cluster
     workers:                       # grantee
       - GRANT SELECT, INSERT ON TABLE public.events TO workers;
       - GRANT SELECT, USAGE ON SEQUENCE public.events_id_seq TO workers;
@@ -240,3 +255,7 @@ uv run cnpg-users sync-grants    # run from the checkout (configs from the curre
 ```
 
 The integration tests create a throwaway namespace with a one-instance CNPG `Cluster` and run `import`, `sync-grants --apply`, `sync-users` passwords (including a real login) and the drop-blocker report against it. GitHub and the password store are faked (the stores have their own tests, sops against a real `sops`). `CNPG_IT_KEEP=1` keeps the namespace for debugging.
+
+## License
+
+[MIT](LICENSE)
