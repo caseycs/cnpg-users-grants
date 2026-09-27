@@ -11,8 +11,6 @@ Nothing changes a database or repo unless you pass `--apply`. Postgres is reache
 - **Passwords stored centrally.** Each person's password lives once in your secret store (AWS SSM, GCP Secret Manager or sops). A cluster only receives the SCRAM verifier, which Postgres keeps anyway, so no cluster holds a plaintext copy in a Kubernetes Secret.
 - **Grants as code, with drift detection.** CNPG has no declaration for grants, so every role's grants, apps included, are kept in the cluster files; `import` snapshots them from the live cluster. `sync-grants` prints the `GRANT`/`REVOKE` that fixes any drift and exits non-zero, so it fits CI.
 
-**Scope.** The users half assumes a GitHub repo (via `gh`) holding each cluster's Helm values file with its CNPG roles list. `sync-grants` needs only kubeconfig access. `import` also reads the password store, to tell humans from apps.
-
 ## Workflow
 
 ```mermaid
@@ -66,11 +64,9 @@ flowchart TB
   class s1,s2,s3,s4,s5,u,g,legend stage
 ```
 
-`sync --apply` only opens a PR when a cluster's roles list actually has to change; otherwise it goes straight to passwords and grants.
-
 ## Quick start
 
-Requires [uv](https://docs.astral.sh/uv/), a kubeconfig with access to the clusters, `gh` logged in (for `sync-users`) and access to your password store (AWS, GCP or sops keys).
+Requires [uv](https://docs.astral.sh/uv/) and a kubeconfig with access to the clusters; that's all `sync-grants` needs. `import` also reads the password store, and managing humans needs `gh` logged in with access to the GitOps repos, where each cluster's CNPG roles list sits in a Helm values file.
 
 <!-- x-release-please-start-version -->
 ```sh
@@ -87,7 +83,7 @@ namespace: my-app
 cluster: cloudnative-pg
 repo: my-org/argocd
 values_file: prod/my-app/cloudnative-pg/values.yaml
-values_roles_path: roles           # where the CNPG roles list is in values_file (see below)
+values_roles_path: roles           # see Files below
 EOF
 
 # fill humans/apps/grants from the live cluster
@@ -96,8 +92,6 @@ uvx --from git+https://github.com/caseycs/cnpg-users-grants@v0.2.0 cnpg-users im
 uvx --from git+https://github.com/caseycs/cnpg-users-grants@v0.2.0 cnpg-users sync
 ```
 <!-- x-release-please-end -->
-
-`values_roles_path` is the dotted path to the list of [CNPG managed roles](https://cloudnative-pg.io/documentation/current/declarative_role_management/) inside `values_file`: `roles` when it's at the top level, `cluster.roles` when your chart nests it under `cluster:`. `sync-users` edits that list.
 
 <!-- x-release-please-start-version -->
 `uvx` fetches and caches the tool on first use. The examples pin the latest release (`@v0.2.0`); drop the `@…` to track `main`, or `uv tool install git+https://github.com/caseycs/cnpg-users-grants@v0.2.0` to keep `cnpg-users` on your PATH.
@@ -122,7 +116,7 @@ Without cluster names, `sync` and `sync-*` run for every file in `clusters/`, `-
 
 ## Granting and offboarding people
 
-Two steps: `user …` only edits the cluster files (review the diff, commit it); applying is separate and manual.
+`user …` only edits the cluster files (review the diff and commit it); `sync-users --apply` applies them.
 
 ```sh
 cnpg-users user grant alice cloudnative-pg.my-app.prod          # 1. config
@@ -136,7 +130,7 @@ cnpg-users sync-users --apply                                    # 2. PR marks h
 cnpg-users sync-grants --apply                                   #    REVOKE the grants she still holds
 ```
 
-**Role changes go through GitOps, never straight to the cluster.** `sync-users --apply` doesn't create or drop roles itself: it commits the values.yaml changes to a branch in each GitOps repo and opens one PR per repo, labeled `cnpg-users-grants` (an open PR with that label is updated instead of opening another). Someone reviews and merges it; ArgoCD or Flux syncs the new roles list, and CNPG creates or drops the roles. The tool waits meanwhile, checking the clusters every 10 seconds for up to `--apply-timeout` (default 180 s), and sets passwords only once the roles exist. If nobody merges in time, it stops without setting them; run it again after the merge.
+`sync-users --apply` labels its PRs `cnpg-users-grants` and updates an open one instead of opening another. It then checks the clusters every 10 seconds for up to `--apply-timeout` (default 180 s) and sets passwords once the roles exist. If nobody merges in time, it stops; run it again after the merge.
 
 CNPG can't drop a role that still owns objects or holds privileges. `sync-users` lists those per database with the `REASSIGN OWNED … DROP OWNED …` to run first. Roles are cluster-wide, so a human in a cluster file can log in to every database of that cluster; `grants:` are per database. Passwords are generated in the store on first `--apply` if missing, and aren't deleted on offboarding.
 
@@ -150,7 +144,7 @@ namespace: my-app
 cluster: cloudnative-pg            # CNPG Cluster name
 repo: my-org/argocd                # where the CNPG values.yaml lives
 values_file: prod/my-app/cloudnative-pg/values.yaml
-values_roles_path: roles           # path to the CNPG roles list in values_file (default: roles)
+values_roles_path: roles           # dotted path to the CNPG roles list in values_file: roles (default), or cluster.roles if nested
 online: true                       # false: skip this cluster
 ignored_grantees: [pg_monitor]     # skip these roles' table/sequence grants (schema, database and default privileges still managed)
 humans:
@@ -228,8 +222,6 @@ A role's privileges on objects it owns are implicit and never listed. `import` c
 ## Good to know
 
 - `import --write` rebuilds `grants:` from the live cluster, so apply pending grant SQL first. For `humans:` it keeps edits not applied yet (a new human not created yet, `ensure: absent` until the role is gone, changed roles); `--prune` takes live as-is.
-- `--apply` reuses an open PR labeled `cnpg-users-grants` (rewriting its branch) instead of opening a new one.
-- Password statements carry a SCRAM verifier computed locally, never the plaintext. Missing passwords are generated and stored on `--apply`.
 - EKS logins are signed in-process with boto3; other kubeconfig auth works as usual.
 
 ## Development
