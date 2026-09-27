@@ -336,9 +336,9 @@ wheels = [
 ]
 
 [[package]]
-name = "cnpg-users"
-version = "0"
-source = { virtual = "." }
+name = "cnpg-users-grants"
+version = "0.1.0"
+source = { editable = "." }
 dependencies = [
     { name = "boto3" },
     { name = "kubernetes" },

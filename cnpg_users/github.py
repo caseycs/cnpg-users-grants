@@ -46,7 +46,7 @@ class FileChange:
     text: str      # new content
 
 
-PR_LABEL = "cnpg-users-grants-cli"
+PR_LABEL = "cnpg-users-grants"
 PR_LABEL_COLOR = "1d76db"
 
 
@@ -71,7 +71,7 @@ def ensure_label(repo: str, label: str = PR_LABEL) -> None:
         if exc.status != 404:
             raise
         api("POST", f"repos/{repo}/labels", {
-            "name": label, "color": PR_LABEL_COLOR, "description": "Opened by cnpg-users.py sync-users (cnpg-users-grants-cli)",
+            "name": label, "color": PR_LABEL_COLOR, "description": "Opened by cnpg-users.py sync-users (cnpg-users-grants)",
         })
 
 

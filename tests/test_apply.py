@@ -72,7 +72,7 @@ def test_open_pr_one_commit_for_all_files_and_label(monkeypatch):
         ("POST", "repos/o/r/git/refs", {"ref": "refs/heads/cnpg-users/sync", "sha": "commit1"}),
         ("POST", "repos/o/r/pulls", {"title": "t", "head": "cnpg-users/sync", "base": "main", "body": "b"}),
         ("POST", "repos/o/r/labels", {"name": github.PR_LABEL, "color": github.PR_LABEL_COLOR,
-                                      "description": "Opened by cnpg-users.py sync-users (cnpg-users-grants-cli)"}),
+                                      "description": "Opened by cnpg-users.py sync-users (cnpg-users-grants)"}),
         ("POST", "repos/o/r/issues/7/labels", {"labels": [github.PR_LABEL]}),
     ]
 

@@ -81,7 +81,7 @@ PR_BRANCH = "cnpg-users/sync"
 
 
 def pr_body(plans: list[UsersPlan]) -> str:
-    lines = ["Sync CNPG roles with the db files in cnpg-users-grants-cli (`dbs/`):", ""]
+    lines = ["Sync CNPG roles with the db files in cnpg-users-grants (`dbs/`):", ""]
     for p in plans:
         lines.append(f"**{p.db.name}** (`{p.db.values_file}`)")
         lines += [f"- {s}" for s in p.change.summary]
