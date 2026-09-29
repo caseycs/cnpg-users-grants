@@ -1,6 +1,6 @@
 [project]
 name = "cnpg-users-grants"
-version = "0.2.0"
+version = "1.0.0"
 description = "Keep CloudNativePG users and grants in YAML, and see what drifted"
 readme = "README.md"
 license = "MIT"

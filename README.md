@@ -84,14 +84,14 @@ values_roles_path: roles           # see Files below
 EOF
 
 # fill humans/apps/grants from the live cluster
-uvx --from git+https://github.com/caseycs/cnpg-users-grants@v0.2.0 cnpg-users import cloudnative-pg.my-app.prod --write
+uvx --from git+https://github.com/caseycs/cnpg-users-grants@v1.0.0 cnpg-users import cloudnative-pg.my-app.prod --write
 # what differs, users and grants?
-uvx --from git+https://github.com/caseycs/cnpg-users-grants@v0.2.0 cnpg-users sync
+uvx --from git+https://github.com/caseycs/cnpg-users-grants@v1.0.0 cnpg-users sync
 ```
 <!-- x-release-please-end -->
 
 <!-- x-release-please-start-version -->
-`uvx` fetches and caches the tool on first use. The examples pin the latest release (`@v0.2.0`); drop the `@…` to track `main`, or `uv tool install git+https://github.com/caseycs/cnpg-users-grants@v0.2.0` to keep `cnpg-users` on your PATH.
+`uvx` fetches and caches the tool on first use. The examples pin the latest release (`@v1.0.0`); drop the `@…` to track `main`, or `uv tool install git+https://github.com/caseycs/cnpg-users-grants@v0.2.0` to keep `cnpg-users` on your PATH.
 <!-- x-release-please-end -->
 
 ## Commands
@@ -181,7 +181,7 @@ sops_file: passwords.sops.yaml     # relative to the current directory
 ```
 
 <!-- x-release-please-start-version -->
-GCP needs the `gcp` extra: `uvx --from 'cnpg-users-grants[gcp] @ git+https://github.com/caseycs/cnpg-users-grants@v0.2.0' cnpg-users …`.
+GCP needs the `gcp` extra: `uvx --from 'cnpg-users-grants[gcp] @ git+https://github.com/caseycs/cnpg-users-grants@v1.0.0' cnpg-users …`.
 <!-- x-release-please-end -->
  The sops store needs `sops` on the PATH; new passwords are written with `sops set --value-stdin`, so they never appear in process listings.
 
