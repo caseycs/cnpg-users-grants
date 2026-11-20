@@ -73,3 +73,26 @@ def test_blank_lines_only_around_multiline_reports(capsys):
     texts = {"a": "a: in sync\n", "b": "b: in sync\n", "c": "c\n  drift\n", "d": "d: in sync\n"}
     run_in_order(list(texts), lambda item, out: (print(texts[item], end="", file=out), (False, None))[1])
     assert capsys.readouterr().out == "a: in sync\nb: in sync\n\nc\n  drift\n\nd: in sync\n"
+
+
+def test_fatal_error_stops_the_run(capsys):
+    import pytest
+
+    from cnpg_users.runner import FatalError
+
+    seen = []
+
+    def work(item, out):
+        seen.append(item)
+        print(f"== {item}", file=out)
+        if item == "b":
+            raise FatalError("token expired")
+        if item == "c":
+            time.sleep(0.3)  # still running when b's error is seen; d and e are queued
+        return False, None
+
+    with pytest.raises(FatalError, match="token expired"):
+        run_in_order(["a", "b", "c", "d", "e"], work, max_workers=1)
+    assert capsys.readouterr().out == "== a\n"  # b's report isn't printed; the CLI prints the error once
+    time.sleep(0.4)
+    assert seen == ["a", "b", "c"]  # d and e cancelled

@@ -70,7 +70,7 @@ from .stores import load_store
 from .importer import cmd_import
 from .sync import apply_grants, cmd_sync_grants
 from .sync_all import apply_sync, cmd_sync
-from .runner import MAX_WORKERS, run_in_order
+from .runner import MAX_WORKERS, FatalError, run_in_order
 from .people import cmd_user
 from .users import apply_all, plan_users
 
@@ -176,6 +176,10 @@ def run() -> None:
     """Console entry point (`cnpg-users`)."""
     try:
         main()
+    except FatalError as exc:
+        sys.stdout.flush()
+        print(f"\nerror: {exc.code}", file=sys.stderr, flush=True)
+        os._exit(1)  # as below: don't wait for reads in flight
     except KeyboardInterrupt:
         sys.stdout.flush()
         print("\ninterrupted", file=sys.stderr, flush=True)

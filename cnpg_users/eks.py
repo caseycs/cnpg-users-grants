@@ -19,6 +19,8 @@ import boto3
 from kubernetes.config import kube_config
 from kubernetes.config.exec_provider import ExecProvider
 
+from .runner import FatalError
+
 TOKEN_PREFIX = "k8s-aws-v1."
 PRESIGN_SECONDS = 60      # as `aws eks get-token`
 TOKEN_LIFETIME_MINUTES = 14  # EKS accepts 15 min from signing; the client refreshes after this
@@ -72,6 +74,14 @@ def _session(profile: str | None, region: str | None) -> boto3.Session:
 
 class EksExecProvider(ExecProvider):
     def run(self, previous_response=None):
+        """A failure stops the run: the kubernetes client would only log it
+        and go on without credentials, for every connection."""
+        try:
+            return self._run(previous_response)
+        except Exception as exc:
+            raise FatalError(f"kubeconfig credentials ({os.path.basename(self.args[0])}) failed: {exc}") from exc
+
+    def _run(self, previous_response=None):
         parsed = parse_get_token(self.args, self.env)
         if parsed is None:
             return super().run(previous_response)
