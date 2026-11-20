@@ -6,6 +6,8 @@
       "release-type": "python",
       "package-name": "cnpg-users-grants",
       "include-component-in-tag": false,
+      "bump-minor-pre-major": true,
+      "release-as": "0.3.0",
       "extra-files": [{ "type": "generic", "path": "README.md" }],
       "changelog-sections": [
         { "type": "feat", "section": "Features" },
