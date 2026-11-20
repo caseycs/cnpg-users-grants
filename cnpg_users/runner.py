@@ -5,7 +5,9 @@ as soon as it and every cluster before it are done, so output never interleaves.
 An optional `after` step runs once in the main thread when every report is
 printed, with the payloads of the dbs that read fine (sync-users --apply).
 Ctrl+C cancels the dbs not started yet and re-raises KeyboardInterrupt;
-reports already printed are complete, nothing is printed half."""
+reports already printed are complete, nothing is printed half. A FatalError
+(credentials or the password store failing) does the same: retrying it for
+every other cluster would only repeat it."""
 
 from __future__ import annotations
 
@@ -18,6 +20,13 @@ from typing import Any, Callable
 
 MAX_WORKERS = 4  # default for --parallel
 STATUS_SECONDS = 0.5
+
+
+class FatalError(SystemExit):
+    """An error no cluster can get past (expired credentials, an unreachable
+    password store): stops the whole run. A SystemExit, not an Exception, so
+    library code catching Exception (the kubernetes exec plugin loader) can't
+    swallow it."""
 
 
 def _status(message: str = "") -> None:
@@ -45,6 +54,8 @@ def collect(work: Callable[..., tuple[bool, Any]], *args) -> Report:
     try:
         drift, payload = work(*args, out=out)
         return Report(out.getvalue(), drift, payload=payload)
+    except FatalError:
+        raise
     except SystemExit as exc:
         print(f"ERROR: {exc.code}", file=out)
     except Exception:  # noqa: BLE001 — one broken db must not hide the others
@@ -76,8 +87,8 @@ def run_in_order(
                 print()
             print(report.text, end="", flush=True)
             reports.append(report)
-    except KeyboardInterrupt:
-        # Ctrl+C: drop dbs not started yet; don't wait for reads in flight
+    except (KeyboardInterrupt, FatalError):
+        # Ctrl+C or fatal: drop dbs not started yet; don't wait for reads in flight
         _status()
         pool.shutdown(wait=False, cancel_futures=True)
         raise
@@ -88,6 +99,8 @@ def run_in_order(
     if after is not None and handed:
         try:
             drift |= after([r.payload for r in handed])
+        except FatalError:
+            raise
         except SystemExit as exc:
             print(f"ERROR: {exc.code}", flush=True)
             error = True

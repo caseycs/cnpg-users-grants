@@ -32,3 +32,33 @@ def test_eks_token_is_presigned_get_caller_identity():
     assert query["Action"] == ["GetCallerIdentity"]
     assert query["X-Amz-Expires"] == ["60"]
     assert "x-k8s-aws-id" in query["X-Amz-SignedHeaders"][0].split(";")
+
+
+def test_credential_failure_escapes_the_kubernetes_client(monkeypatch, caplog):
+    """The client catches Exception from exec plugins, logs it and goes on
+    without a token; a FatalError must get through and stop the run."""
+    import logging
+
+    import pytest
+    from botocore.exceptions import TokenRetrievalError
+    from kubernetes.config import kube_config
+
+    from cnpg_users import eks
+    from cnpg_users.runner import FatalError
+
+    def expired(profile, region):
+        raise TokenRetrievalError(provider="sso", error_msg="Token has expired and refresh failed")
+
+    eks.install()
+    monkeypatch.setattr(eks, "_session", expired)
+    exec_cfg = {"apiVersion": "client.authentication.k8s.io/v1beta1", "command": "aws",
+                "args": ["--region", "eu-central-1", "eks", "get-token", "--cluster-name", "prod"]}
+    loader = kube_config.KubeConfigLoader(config_dict={
+        "current-context": "c",
+        "contexts": [{"name": "c", "context": {"cluster": "k", "user": "u"}}],
+        "clusters": [{"name": "k", "cluster": {"server": "https://k.example.com"}}],
+        "users": [{"name": "u", "user": {"exec": exec_cfg}}],
+    })
+    with pytest.raises(FatalError, match=r"kubeconfig credentials \(aws\) failed: .*Token has expired"):
+        loader._load_authentication()
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]  # the client never caught and logged it

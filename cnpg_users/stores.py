@@ -26,6 +26,8 @@ from typing import Any, Callable, Protocol
 
 from ruamel.yaml import YAML
 
+from .runner import FatalError
+
 PASSWORDS_STORE = "passwords_store.yaml"
 ROLE_NAME = re.compile(r"[a-z_][a-z0-9_]*")
 
@@ -60,7 +62,7 @@ class AwsSsmStore:
         return boto3.Session(profile_name=self.aws_profile, region_name=self.aws_region).client("ssm")
 
     def _fail(self, action: str, exc: Exception):
-        sys.exit(f"error {action} in {self.description}: {exc}")
+        raise FatalError(f"error {action} in {self.description}: {exc}") from exc
 
     def names(self) -> set[str]:
         from botocore.exceptions import BotoCoreError, ClientError
@@ -114,18 +116,24 @@ class GcpSecretManagerStore:
         try:
             from google.cloud import secretmanager  # type: ignore[attr-defined]
         except ImportError:
-            sys.exit("the gcp-secret-manager store needs google-cloud-secret-manager: "
+            raise FatalError("the gcp-secret-manager store needs google-cloud-secret-manager: "
                      "install with the [gcp] extra, e.g. uvx --from 'cnpg-users-grants[gcp] @ git+…' cnpg-users")
         return secretmanager.SecretManagerServiceClient()
+
+    def _fail(self, action: str, exc: Exception):
+        raise FatalError(f"error {action} in {self.description}: {exc}") from exc
 
     def names(self) -> set[str]:
         client = self._client()
         parent = f"projects/{self.gcp_project}"
         names = set()
-        for secret in client.list_secrets(request={"parent": parent, "filter": f"name:{self.gcp_secret_prefix}"}):
-            secret_id = secret.name.rsplit("/", 1)[-1]
-            if secret_id.startswith(self.gcp_secret_prefix):
-                names.add(secret_id[len(self.gcp_secret_prefix):])
+        try:
+            for secret in client.list_secrets(request={"parent": parent, "filter": f"name:{self.gcp_secret_prefix}"}):
+                secret_id = secret.name.rsplit("/", 1)[-1]
+                if secret_id.startswith(self.gcp_secret_prefix):
+                    names.add(secret_id[len(self.gcp_secret_prefix):])
+        except Exception as exc:  # google.api_core / google.auth errors, without importing them
+            self._fail("listing secrets", exc)
         return names
 
     def passwords(self, names: list[str]) -> dict[str, str]:
@@ -137,17 +145,20 @@ class GcpSecretManagerStore:
                 out[name] = client.access_secret_version(request={"name": path}).payload.data.decode()
             except Exception as exc:  # google.api_core.exceptions.NotFound, without importing it
                 if type(exc).__name__ != "NotFound":
-                    raise
+                    self._fail("reading secrets", exc)
         return out
 
     def create(self, name: str, password: str) -> str:
         client = self._client()
         secret_id = self.gcp_secret_prefix + name
-        secret = client.create_secret(request={
-            "parent": f"projects/{self.gcp_project}", "secret_id": secret_id,
-            "secret": {"replication": {"automatic": {}}},
-        })
-        client.add_secret_version(request={"parent": secret.name, "payload": {"data": password.encode()}})
+        try:
+            secret = client.create_secret(request={
+                "parent": f"projects/{self.gcp_project}", "secret_id": secret_id,
+                "secret": {"replication": {"automatic": {}}},
+            })
+            client.add_secret_version(request={"parent": secret.name, "payload": {"data": password.encode()}})
+        except Exception as exc:
+            self._fail(f"creating {secret_id}", exc)
         return secret.name
 
 
@@ -169,7 +180,7 @@ class SopsStore:
         # own session: Ctrl+C in the terminal reaches only this tool, not sops
         result = subprocess.run(["sops", *args], input=stdin, capture_output=True, text=True, start_new_session=True)
         if result.returncode:
-            sys.exit(f"sops {' '.join(a for a in args if not a.startswith('['))} failed: {result.stderr.strip()}")
+            raise FatalError(f"sops {' '.join(a for a in args if not a.startswith('['))} failed: {result.stderr.strip()}")
         return result.stdout
 
     def _load(self) -> dict[str, str]:
